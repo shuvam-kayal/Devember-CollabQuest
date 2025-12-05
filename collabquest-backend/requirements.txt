@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+motor
+beanie
+pydantic
+httpx       # To talk to GitHub API
+python-jose # To create JWT tokens for your app
+python-dotenv

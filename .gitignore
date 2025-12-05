@@ -1,0 +1,31 @@
+--- GLOBAL ---
+
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+--- SECRETS (NEVER PUSH THESE) ---
+
+.env
+.env.local
+*.pem
+*.key
+
+--- BACKEND (PYTHON) ---
+
+collabquest-backend/pycache/
+collabquest-backend/*.pyc
+collabquest-backend/venv/
+collabquest-backend/.venv/
+collabquest-backend/env/
+
+--- FRONTEND (NODE/NEXT.JS) ---
+
+collabquest-frontend/node_modules/
+collabquest-frontend/.next/
+collabquest-frontend/build/
+collabquest-frontend/dist/
+collabquest-frontend/npm-debug.log*
+collabquest-frontend/yarn-debug.log*
+collabquest-frontend/yarn-error.log*
