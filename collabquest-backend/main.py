@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
-from app.routes import auth_routes, user_routes
+from app.routes import auth_routes, user_routes, team_routes
 
 app = FastAPI(title="CollabQuest API", version="1.0")
 
@@ -28,6 +28,7 @@ async def start_db():
 # --- REGISTER ROUTES ---
 app.include_router(auth_routes.router, prefix="/auth", tags=["Authentication"])
 app.include_router(user_routes.router, prefix="/users", tags=["Users"])
+app.include_router(team_routes.router, prefix="/teams", tags=["Teams"])
 
 @app.get("/")
 async def root():

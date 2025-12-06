@@ -2,9 +2,10 @@
 import { useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Cookies from "js-cookie";
-import axios from "axios"; 
+import axios from "axios";
 import { motion } from "framer-motion";
 import { ShieldCheck, Loader2 } from "lucide-react";
+import Link from "next/link";
 
 // Define the User Shape
 interface UserProfile {
@@ -77,7 +78,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-10">
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="max-w-4xl mx-auto"
@@ -86,45 +87,47 @@ export default function Dashboard() {
           <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
             CollabQuest
           </h1>
-          
+
           {/* DYNAMIC TRUST SCORE BADGE */}
           <div className="flex items-center gap-3 bg-gray-900 px-5 py-2 rounded-full border border-gray-800 shadow-lg">
             <ShieldCheck className={`${getScoreColor(user.trust_score)} h-6 w-6`} />
             <div className="flex flex-col">
-                <span className="text-xs text-gray-400 font-mono uppercase">Trust Score</span>
-                <span className="font-bold text-lg leading-none">{user.trust_score.toFixed(1)} / 10.0</span>
+              <span className="text-xs text-gray-400 font-mono uppercase">Trust Score</span>
+              <span className="font-bold text-lg leading-none">{user.trust_score.toFixed(1)} / 10.0</span>
             </div>
           </div>
         </header>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {/* Profile Card */}
-          <motion.div 
+          <motion.div
             whileHover={{ scale: 1.02 }}
             className="p-6 rounded-2xl bg-gray-900 border border-gray-800 shadow-xl flex items-center gap-4"
           >
-            <img 
-                src={user.avatar_url} 
-                alt="Avatar" 
-                className="w-16 h-16 rounded-full border-2 border-purple-500" 
+            <img
+              src={user.avatar_url}
+              alt="Avatar"
+              className="w-16 h-16 rounded-full border-2 border-purple-500"
             />
             <div>
-                <h2 className="text-xl font-semibold">Welcome, {user.username}!</h2>
-                <p className="text-gray-400 text-sm">
-                 Status: <span className="text-green-400 font-mono">Verified Hacker</span>
-                </p>
+              <h2 className="text-xl font-semibold">Welcome, {user.username}!</h2>
+              <p className="text-gray-400 text-sm">
+                Status: <span className="text-green-400 font-mono">Verified Hacker</span>
+              </p>
             </div>
           </motion.div>
 
           {/* Action Card */}
-          <motion.div 
+          <motion.div
             whileHover={{ scale: 1.02 }}
             className="p-6 rounded-2xl bg-gradient-to-br from-purple-900/50 to-blue-900/50 border border-purple-500/20"
           >
             <h2 className="text-xl font-semibold mb-4">Start a Project</h2>
-            <button className="w-full py-3 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg">
-              Find a Team
-            </button>
+            <Link href="/find-team">
+              <button className="w-full py-3 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg">
+                Find a Team
+              </button>
+            </Link>
           </motion.div>
         </div>
       </motion.div>
