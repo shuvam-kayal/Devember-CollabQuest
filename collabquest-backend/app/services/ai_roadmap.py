@@ -48,3 +48,34 @@ async def generate_roadmap(project_idea: str, tech_stack: list[str]):
     except Exception as e:
         print(f"AI Error: {e}")
         return None
+    
+
+async def suggest_tech_stack(description: str, current_stack: list[str]):
+    """
+    Reviews the current stack and suggests additions/removals.
+    """
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    
+    prompt = f"""
+    You are a CTO reviewing a project tech stack.
+    Project: "{description}"
+    Current Stack: {current_stack}
+    
+    1. Suggest NEW modern tools to ADD that are missing (e.g., Database, Auth, Deployment).
+    2. Identify redundant/outdated tools to REMOVE if any(e.g., if "React" and "jQuery" both exist, remove jQuery).
+    
+    Return ONLY a valid JSON object. No markdown.
+    Format:
+    {{
+        "add": ["Tool A", "Tool B"],
+        "remove": ["Tool C"]
+    }}
+    """
+    
+    try:
+        response = model.generate_content(prompt)
+        clean_text = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean_text)
+    except Exception as e:
+        print(f"AI Suggestion Error: {e}")
+        return {"add": [], "remove": []}

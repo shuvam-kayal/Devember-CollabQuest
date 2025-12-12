@@ -51,3 +51,21 @@ async def github_callback(code: str):
     # Redirect back to Frontend with the token
     # In production, use HttpOnly cookies. For hackathon, URL param is fine.
     return RedirectResponse(f"http://localhost:3000/dashboard?token={jwt_token}")
+
+@router.get("/dev/{username}")
+async def dev_login(username: str):
+    """
+    Hackathon Backdoor: Log in as any seeded user (e.g., 'Alice') 
+    without GitHub authentication.
+    """
+    # 1. Find the fake user
+    user = await User.find_one(User.username == username)
+    
+    if not user:
+        raise HTTPException(status_code=404, detail=f"User '{username}' not found. Did you run seed_data.py?")
+    
+    # 2. Generate a real JWT for them
+    jwt_token = create_access_token({"sub": str(user.id)})
+    
+    # 3. Redirect to Frontend just like a real login
+    return RedirectResponse(f"http://localhost:3000/dashboard?token={jwt_token}")

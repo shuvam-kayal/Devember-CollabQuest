@@ -60,6 +60,7 @@ httpx>=0.24.0
 python-jose[cryptography]>=3.3.0
 certifi>=2023.7.22
 email-validator>=2.0.0
+google-generativeai
 '''
 
 Then run:
@@ -73,6 +74,7 @@ MONGO_URI=mongodb+srv://<your_user>:<your_pass>@cluster0.mongodb.net/?retryWrite
 GITHUB_CLIENT_ID=your_github_client_id
 GITHUB_CLIENT_SECRET=your_github_client_secret
 SECRET_KEY=any_random_secret_string
+GEMINI_API_KEY=your_gemini_api_key
 
 
 Run the Server:
@@ -90,6 +92,7 @@ cd collabquest-frontend
 # Install dependencies
 npm install framer-motion lucide-react js-cookie axios
 npm install -D @types/js-cookie
+npm install --save-dev @types/js-cookie
 
 # Run the frontend
 npm run dev
@@ -115,3 +118,11 @@ Open http://localhost:3000 in your browser.
 Click "Login with GitHub".
 
 You should be redirected to your Dashboard with a calculated Trust Score.
+
+Note:
+
+Reset Data (If things get messy):
+
+python clean_db.py (Wipe DB)
+
+python seed_data.py (Create fresh dummy users/projects)
