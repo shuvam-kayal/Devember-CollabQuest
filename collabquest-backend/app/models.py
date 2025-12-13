@@ -3,7 +3,7 @@ from beanie import Document
 from pydantic import BaseModel, Field
 from datetime import datetime
 
-# ... (Keep Skill, User, Team, Swipe models as is) ...
+# ... (Keep Skill, User, Team, Swipe, Match) ...
 class Skill(BaseModel):
     name: str
     level: str
@@ -36,28 +36,15 @@ class Swipe(Document):
     timestamp: datetime = Field(default_factory=datetime.now)
     class Settings: name = "swipes"
 
-# --- UPDATED MATCH MODEL ---
 class Match(Document):
-    user_id: str      # Candidate
+    user_id: str
     project_id: str
     leader_id: str
-    
-    # New Fields for Status & Cooldown
-    status: str = "matched" # Options: matched, invited, requested, joined
-    last_action_at: datetime = Field(default_factory=datetime.now) 
-    
+    status: str = "matched"
+    rejected_by: Optional[str] = None
+    last_action_at: datetime = Field(default_factory=datetime.now)
     created_at: datetime = Field(default_factory=datetime.now)
     class Settings: name = "matches"
-
-class Notification(Document):
-    recipient_id: str
-    sender_id: str
-    message: str
-    type: str
-    related_id: Optional[str] = None
-    is_read: bool = False
-    created_at: datetime = Field(default_factory=datetime.now)
-    class Settings: name = "notifications"
 
 class Message(Document):
     sender_id: str
@@ -67,13 +54,27 @@ class Message(Document):
     timestamp: datetime = Field(default_factory=datetime.now)
     class Settings: name = "messages"
 
-class ChatGroup(Document):
-    name: str
-    admin_id: str # The creator/admin
-    members: List[str] # List of User IDs
-    is_team_group: bool = False
-    team_id: Optional[str] = None
+# --- UPDATED NOTIFICATION ---
+class Notification(Document):
+    recipient_id: str
+    sender_id: str
+    message: str
+    type: str
+    related_id: Optional[str] = None
+    is_read: bool = False
+    # New Field: Stores 'accepted', 'rejected', or 'pending'
+    action_status: str = "pending" 
     created_at: datetime = Field(default_factory=datetime.now)
     
     class Settings:
-        name = "chat_groups"
+        name = "notifications"
+    
+class ChatGroup(Document):
+    name: str
+    admin_id: str
+    members: List[str]
+    is_team_group: bool = False
+    team_id: Optional[str] = None
+    avatar_url: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    class Settings: name = "chat_groups"

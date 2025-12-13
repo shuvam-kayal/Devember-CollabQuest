@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { 
     ShieldCheck, Loader2, Edit2, X, Plus, 
     MessageSquare, UserCheck, Bell, CheckCircle, 
-    Briefcase, UserPlus, Send, Code2, Mail, Clock, Search 
+    Briefcase, UserPlus, Send, Code2, Mail, Clock, Search, XCircle 
 } from "lucide-react";
 import Link from "next/link";
 
@@ -31,7 +31,8 @@ interface Match {
     role: "Team Leader" | "Teammate";
     project_id: string;
     project_name: string;
-    status: "matched" | "invited" | "requested" | "joined";
+    status: "matched" | "invited" | "requested" | "joined" | "rejected";
+    rejected_by?: string;
 }
 
 interface Notification {
@@ -41,6 +42,7 @@ interface Notification {
     related_id?: string;
     sender_id: string;
     is_read: boolean;
+    action_status?: string; // New field
 }
 
 export default function Dashboard() {
@@ -52,8 +54,6 @@ export default function Dashboard() {
   const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0); 
-  
-  // Loading States for Actions
   const [processingId, setProcessingId] = useState<string | null>(null);
 
   const [showProfileModal, setShowProfileModal] = useState(false);
@@ -62,43 +62,21 @@ export default function Dashboard() {
 
   const [searchTalent, setSearchTalent] = useState("");
   const [searchProjects, setSearchProjects] = useState("");
-  
   const [emailRecipient, setEmailRecipient] = useState<{id: string, name: string} | null>(null);
   const [emailSubject, setEmailSubject] = useState("");
   const [emailBody, setEmailBody] = useState("");
-  
   const [mySkills, setMySkills] = useState<string[]>([]);
   const [dropdownValue, setDropdownValue] = useState("");
-
   const notifRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const urlToken = searchParams.get("token");
     let activeToken = urlToken;
-
-    if (urlToken) {
-      Cookies.set("token", urlToken, { expires: 7 });
-      router.replace("/dashboard");
-    } else {
-      activeToken = Cookies.get("token") || null;
-      if (!activeToken) { router.push("/"); return; }
-    }
-
-    if (activeToken) {
-        fetchUserProfile(activeToken);
-        fetchMatches(activeToken);
-        fetchNotifications(activeToken);
-        fetchUnreadCount(activeToken);
-    }
-
-    const handleClickOutside = (event: MouseEvent) => {
-        if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
-            setShowNotifDropdown(false);
-        }
-    };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-
+    if (urlToken) { Cookies.set("token", urlToken, { expires: 7 }); router.replace("/dashboard"); } 
+    else { activeToken = Cookies.get("token") || null; if (!activeToken) { router.push("/"); return; } }
+    if (activeToken) { fetchUserProfile(activeToken); fetchMatches(activeToken); fetchNotifications(activeToken); fetchUnreadCount(activeToken); }
+    const handleClickOutside = (e: MouseEvent) => { if (notifRef.current && !notifRef.current.contains(e.target as Node)) setShowNotifDropdown(false); };
+    document.addEventListener("mousedown", handleClickOutside); return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [searchParams, router]);
 
   useEffect(() => {
@@ -106,11 +84,7 @@ export default function Dashboard() {
       const userId = user._id || user.id;
       if (!userId) return;
       const ws = new WebSocket(`ws://localhost:8000/chat/ws/${userId}`);
-      ws.onmessage = () => { 
-          setUnreadCount(prev => prev + 1); 
-          const token = Cookies.get("token"); 
-          if(token) fetchNotifications(token); 
-      };
+      ws.onmessage = () => { setUnreadCount(prev => prev + 1); const token = Cookies.get("token"); if(token) fetchNotifications(token); };
       return () => ws.close();
   }, [user]);
 
@@ -119,43 +93,63 @@ export default function Dashboard() {
   const fetchNotifications = async (jwt: string) => { try { const res = await axios.get("http://localhost:8000/notifications/", { headers: { Authorization: `Bearer ${jwt}` } }); setNotifications(res.data); } catch (e) { console.error("Failed to fetch notifications"); } }
   const fetchUnreadCount = async (jwt: string) => { try { const res = await axios.get("http://localhost:8000/chat/unread-count", { headers: { Authorization: `Bearer ${jwt}` } }); setUnreadCount(res.data.count); } catch (e) { console.error("Failed unread count"); } }
 
-  // --- ACTIONS ---
-  
   const toggleNotifications = async () => {
       const newState = !showNotifDropdown;
       setShowNotifDropdown(newState);
       if (newState) {
           const token = Cookies.get("token");
-          // Keep actionable items unread in UI
+          // Keep actionable items unread visually until acted upon
           setNotifications(prev => prev.map(n => (n.type === "team_invite" || n.type === "join_request") ? n : { ...n, is_read: true }));
           try { await axios.post("http://localhost:8000/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } }); } catch(e) {}
       }
   }
 
+  // --- ACTIONS ---
+
+  const handleReject = async (match: Match) => {
+      if(!confirm("Are you sure you want to reject this request?")) return;
+      const token = Cookies.get("token");
+      const myId = user?._id || user?.id || "";
+
+      try {
+          // Optimistic Update: Set status to rejected
+          const updateStatus = (prev: Match[]) => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "rejected" as const, rejected_by: myId } : m);
+          if (match.role === "Teammate") setTalentPool(updateStatus);
+          else setProjectOpportunities(updateStatus);
+          
+          await axios.post(`http://localhost:8000/teams/${match.project_id}/reject`, 
+            { target_user_id: match.id }, { headers: { Authorization: `Bearer ${token}` } }
+          );
+
+          // Find related notification and mark as REJECTED
+          const relatedNotif = notifications.find(n => n.related_id === match.project_id && !n.is_read);
+          if (relatedNotif) {
+             await axios.put(`http://localhost:8000/notifications/${relatedNotif._id}/read?status=rejected`, {}, { headers: { Authorization: `Bearer ${token}` } });
+             setNotifications(prev => prev.map(n => n._id === relatedNotif._id ? { ...n, is_read: true, action_status: "rejected" } : n));
+          }
+          
+          fetchMatches(token!);
+      } catch (err) { alert("Action failed"); fetchMatches(token!); }
+  }
+
   const sendInvite = async (match: Match) => {
       const token = Cookies.get("token");
-      setProcessingId(match.id + match.project_id); // Lock button
+      setProcessingId(match.id + match.project_id);
       try {
-          // Optimistic
-          setTalentPool(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "invited" } : m));
+          setTalentPool(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "invited" as const } : m));
           await axios.post(`http://localhost:8000/teams/${match.project_id}/invite`, { target_user_id: match.id }, { headers: { Authorization: `Bearer ${token}` } });
-          
-          setTimeout(() => fetchMatches(token!), 500); // Small delay to allow DB sync
-      } catch (err: any) { alert("Failed"); fetchMatches(token!); }
-      finally { setProcessingId(null); }
+          setTimeout(() => fetchMatches(token!), 500);
+      } catch (err: any) { alert("Failed"); fetchMatches(token!); } finally { setProcessingId(null); }
   }
 
   const requestJoin = async (match: Match) => {
       const token = Cookies.get("token");
       setProcessingId(match.id + match.project_id);
       try {
-          // Optimistic
-          setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "requested" } : m));
+          setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "requested" as const } : m));
           await axios.post(`http://localhost:8000/teams/${match.project_id}/invite`, { target_user_id: "LEADER" }, { headers: { Authorization: `Bearer ${token}` } });
-          
           setTimeout(() => fetchMatches(token!), 500);
-      } catch (err: any) { alert("Failed"); fetchMatches(token!); }
-      finally { setProcessingId(null); }
+      } catch (err: any) { alert("Failed"); fetchMatches(token!); } finally { setProcessingId(null); }
   }
 
   const handleConnectionAction = async (match: Match) => {
@@ -167,24 +161,24 @@ export default function Dashboard() {
           if (match.role === "Team Leader") target = await getCurrentUserId(token!);
 
           // Optimistic Update
-          if (match.role === "Teammate") setTalentPool(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "joined" } : m));
-          else setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "joined" } : m));
+          const updateStatus = (prev: Match[]) => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "joined" as const } : m);
+          if (match.role === "Teammate") setTalentPool(updateStatus);
+          else setProjectOpportunities(updateStatus);
           
           await axios.post(`http://localhost:8000/teams/${match.project_id}/members`, 
             { target_user_id: target }, { headers: { Authorization: `Bearer ${token}` } }
           );
 
-          // Clear Notification
+          // Find notification and mark as ACCEPTED
           const relatedNotif = notifications.find(n => n.related_id === match.project_id && !n.is_read);
           if (relatedNotif) {
-             await axios.put(`http://localhost:8000/notifications/${relatedNotif._id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
-             setNotifications(prev => prev.map(n => n._id === relatedNotif._id ? { ...n, is_read: true } : n));
+             await axios.put(`http://localhost:8000/notifications/${relatedNotif._id}/read?status=accepted`, {}, { headers: { Authorization: `Bearer ${token}` } });
+             setNotifications(prev => prev.map(n => n._id === relatedNotif._id ? { ...n, is_read: true, action_status: "accepted" } : n));
           }
 
           alert("Success! Team updated.");
           setTimeout(() => fetchMatches(token!), 500);
-      } catch (err) { alert("Action failed"); fetchMatches(token!); }
-      finally { setProcessingId(null); }
+      } catch (err) { alert("Action failed"); fetchMatches(token!); } finally { setProcessingId(null); }
   }
 
   const handleNotificationAction = async (notif: Notification) => {
@@ -196,9 +190,11 @@ export default function Dashboard() {
           if (notif.type === "join_request") target = notif.sender_id; 
           
           await axios.post(`http://localhost:8000/teams/${notif.related_id}/members`, { target_user_id: target }, { headers: { Authorization: `Bearer ${token}` } });
-          await axios.put(`http://localhost:8000/notifications/${notif._id}/read`, {}, { headers: { Authorization: `Bearer ${token}` } });
           
-          setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, is_read: true } : n));
+          // Mark as ACCEPTED
+          await axios.put(`http://localhost:8000/notifications/${notif._id}/read?status=accepted`, {}, { headers: { Authorization: `Bearer ${token}` } });
+          
+          setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, is_read: true, action_status: "accepted" } : n));
           setTimeout(() => fetchMatches(token!), 500);
       } catch (err) { alert("Action failed"); }
   };
@@ -216,29 +212,82 @@ export default function Dashboard() {
   const renderMatchButton = (match: Match) => {
       const isProcessing = processingId === (match.id + match.project_id);
       
-      // 1. I am Leader
+      // REJECTED STATE Logic
+      if (match.status === "rejected") {
+          const myId = user?._id || user?.id;
+          const isMe = match.rejected_by === myId;
+          
+          let text = "";
+          if (isMe) text = "Rejected by You";
+          else if (match.role === "Teammate") text = "Rejected by Candidate";
+          else text = "Rejected by Leader";
+          
+          return <div className="flex-1 bg-red-900/20 text-red-400 border border-red-900/50 py-1.5 rounded text-xs font-bold text-center flex items-center justify-center gap-1"><XCircle className="w-3 h-3"/> {text}</div>;
+      }
+
+      // 1. LEADER VIEW
       if (match.role === "Teammate") {
-          if (match.status === "matched") return <button disabled={isProcessing} onClick={() => sendInvite(match)} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><Plus className="w-3 h-3"/> Invite</>}</button>;
+          if (match.status === "matched") return <button onClick={() => sendInvite(match)} disabled={isProcessing} className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><Plus className="w-3 h-3"/> Invite</>}</button>;
           if (match.status === "invited") return <div className="flex-1 bg-gray-700 text-gray-400 py-1.5 rounded text-xs flex items-center justify-center gap-1"><Clock className="w-3 h-3"/> Pending</div>;
-          if (match.status === "requested") return <button disabled={isProcessing} onClick={() => handleConnectionAction(match)} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><CheckCircle className="w-3 h-3"/> Accept Request</>}</button>;
+          
+          // REQUESTED -> ACCEPT or REJECT
+          if (match.status === "requested") return (
+              <div className="flex gap-1 flex-1">
+                  <button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><CheckCircle className="w-3 h-3"/> Accept</>}</button>
+                  <button onClick={() => handleReject(match)} className="bg-red-600 hover:bg-red-500 text-white px-2 rounded"><XCircle className="w-3 h-3"/></button>
+              </div>
+          );
           if (match.status === "joined") return <div className="flex-1 bg-gray-800 text-green-400 border border-green-900 py-1.5 rounded text-xs font-bold text-center">Member</div>;
       }
-      // 2. I am Candidate
+      // 2. CANDIDATE VIEW
       else {
-          if (match.status === "matched") return <button disabled={isProcessing} onClick={() => requestJoin(match)} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><Send className="w-3 h-3"/> Request Join</>}</button>;
+          if (match.status === "matched") return <button onClick={() => requestJoin(match)} disabled={isProcessing} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><Send className="w-3 h-3"/> Request Join</>}</button>;
           if (match.status === "requested") return <div className="flex-1 bg-gray-700 text-gray-400 py-1.5 rounded text-xs flex items-center justify-center gap-1"><Clock className="w-3 h-3"/> Pending</div>;
-          if (match.status === "invited") return <button disabled={isProcessing} onClick={() => handleConnectionAction(match)} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><CheckCircle className="w-3 h-3"/> Join Team</>}</button>;
+          
+          // INVITED -> JOIN or DECLINE
+          if (match.status === "invited") return (
+              <div className="flex gap-1 flex-1">
+                  <button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin"/> : <><CheckCircle className="w-3 h-3"/> Join</>}</button>
+                  <button onClick={() => handleReject(match)} className="bg-red-600 hover:bg-red-500 text-white px-2 rounded"><XCircle className="w-3 h-3"/></button>
+              </div>
+          );
           if (match.status === "joined") return <div className="flex-1 bg-gray-800 text-green-400 border border-green-900 py-1.5 rounded text-xs font-bold text-center">Joined</div>;
       }
+      
+      return <div className="flex-1 text-gray-500 text-xs text-center py-1 bg-gray-900/50 rounded">Status: {match.status}</div>;
   };
 
+  const renderNotifButtonText = (n: Notification) => {
+      // Logic for Gray Buttons (Read)
+      if (n.is_read) {
+          if (n.action_status === "rejected") return "Rejected";
+          if (n.action_status === "accepted") return "Joined";
+          
+          // Fallback for old data or generic reads
+          if (n.message.toLowerCase().includes("declined")) return "Rejected";
+          if (n.type === "team_invite") return "Joined";
+          if (n.type === "join_request") return "Accepted";
+          return "Seen";
+      }
+      
+      // Logic for Green Buttons (Unread)
+      if (n.type === "team_invite") return "Join Team";
+      if (n.type === "join_request") return "Accept Request";
+      return "Check";
+  }
+
+  // ... (Rest of component matches previous version) ...
+  // Full JSX block below
+  
   if (!user) return <div className="flex h-screen items-center justify-center bg-gray-950 text-white"><Loader2 className="animate-spin" /></div>;
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-10">
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-6xl mx-auto">
         <header className="flex items-center justify-between mb-12">
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">CollabQuest</h1>
+          <div className="flex items-center gap-4">
+            <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">CollabQuest</h1>
+          </div>
           <div className="flex items-center gap-4">
             <div className="relative" ref={notifRef}>
                 <button onClick={toggleNotifications} className="p-3 bg-gray-800 hover:bg-gray-700 rounded-full border border-gray-700 transition relative">
@@ -255,9 +304,18 @@ export default function Dashboard() {
                                         <div key={n._id} className={`p-3 border-b border-gray-800 hover:bg-gray-800/50 transition ${n.is_read ? 'opacity-50' : ''}`}>
                                             <p className="text-xs text-gray-300 mb-2">{n.message}</p>
                                             {(n.type === 'team_invite' || n.type === 'join_request') && (
-                                                <button onClick={() => handleNotificationAction(n)} disabled={n.is_read} className={`w-full text-xs py-1.5 rounded font-bold flex items-center justify-center gap-1 ${n.is_read ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-green-600 hover:bg-green-500 text-white'}`}>
-                                                    <CheckCircle className="w-3 h-3"/> {n.is_read ? 'Handled' : 'Accept'}
+                                                <button 
+                                                    onClick={() => handleNotificationAction(n)}
+                                                    disabled={n.is_read}
+                                                    className={`w-full text-xs py-1.5 rounded font-bold flex items-center justify-center gap-1 ${n.is_read ? (renderNotifButtonText(n) === 'Rejected' ? 'bg-red-900 text-red-200 cursor-not-allowed' : 'bg-gray-800 text-gray-500 cursor-not-allowed') : 'bg-green-600 hover:bg-green-500 text-white'}`}
+                                                >
+                                                    {renderNotifButtonText(n) === 'Rejected' ? <XCircle className="w-3 h-3"/> : <CheckCircle className="w-3 h-3"/>} {renderNotifButtonText(n)}
                                                 </button>
+                                            )}
+                                            {n.type === 'like' && !n.is_read && (
+                                                <Link href="/matches">
+                                                    <button className="w-full text-xs py-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded font-bold">Review Match</button>
+                                                </Link>
                                             )}
                                         </div>
                                     ))
@@ -271,9 +329,6 @@ export default function Dashboard() {
             <div className="flex items-center gap-3 bg-gray-900 px-5 py-2 rounded-full border border-gray-800 shadow-lg"><ShieldCheck className={getScoreColor(user.trust_score) + " h-6 w-6"} /><div className="flex flex-col"><span className="text-xs text-gray-400 font-mono uppercase">Trust Score</span><span className="font-bold text-lg leading-none">{user.trust_score.toFixed(1)}</span></div></div>
           </div>
         </header>
-
-        {/* ... (Rest is same as before: Grid, Searchable Lists, Modals) ... */}
-        {/* Paste the rest of the return block here (Grid, Talent Pool, Project Matches, Modals) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
             <motion.div whileHover={{ scale: 1.02 }} onClick={() => setShowProfileModal(true)} className="p-6 rounded-2xl bg-gray-900 border border-gray-800 shadow-xl flex items-center gap-4 cursor-pointer group hover:border-purple-500/50 transition-all relative">
                 <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 className="w-4 h-4 text-purple-400" /></div>
@@ -285,7 +340,6 @@ export default function Dashboard() {
                 <Link href="/find-team"><button className="w-full py-3 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg">Go to Marketplace</button></Link>
             </motion.div>
         </div>
-
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="bg-gray-900/30 p-6 rounded-3xl border border-gray-800">
                 <div className="flex justify-between items-center mb-6"><h3 className="text-xl font-bold flex items-center gap-2 text-blue-300"><UserPlus className="w-5 h-5"/> Talent Pool</h3><div className="relative"><input className="bg-gray-900 border border-gray-700 rounded-full px-4 py-1 text-xs outline-none focus:border-blue-500 w-40" placeholder="Search..." value={searchTalent} onChange={e => setSearchTalent(e.target.value)} /><Search className="w-3 h-3 text-gray-500 absolute right-3 top-2" /></div></div>
