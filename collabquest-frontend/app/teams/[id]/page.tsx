@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import { 
   Bot, Calendar, Code2, Layers, LayoutDashboard, Loader2, UserPlus, 
-  Sparkles, X, Plus, RefreshCw, Trash2, Shield, Check, AlertTriangle 
+  Sparkles, X, Plus, RefreshCw, Trash2, Check, AlertTriangle, MessageSquare 
 } from "lucide-react";
 
 const PRESET_SKILLS = [
@@ -31,6 +31,7 @@ interface Team {
   members: Member[];
   needed_skills: string[];
   project_roadmap?: any;
+  chat_group_id?: string; // <--- This matches backend response
 }
 
 interface Suggestions {
@@ -83,6 +84,17 @@ export default function TeamDetails() {
   const isLeader = team && currentUserId === team.leader_id;
 
   // --- ACTIONS ---
+
+  const createTeamChat = async () => {
+      const token = Cookies.get("token");
+      try {
+          const res = await axios.post(`http://localhost:8000/chat/groups/team/${teamId}`, {}, {
+              headers: { Authorization: `Bearer ${token}` }
+          });
+          // Redirect to Chat with this group active
+          router.push(`/chat?targetId=${res.data._id || res.data.id}`);
+      } catch (err) { alert("Failed to create group"); }
+  };
   
   const removeMember = async (memberId: string) => {
       if(!confirm("Are you sure you want to remove this member?")) return;
@@ -91,7 +103,7 @@ export default function TeamDetails() {
           await axios.delete(`http://localhost:8000/teams/${teamId}/members/${memberId}`, {
               headers: { Authorization: `Bearer ${token}` }
           });
-          if (token) fetchTeamData(token);
+          if (token) fetchTeamData(token); // RELOAD DATA
       } catch (err) { alert("Failed to remove member"); }
   };
 
@@ -111,6 +123,7 @@ export default function TeamDetails() {
             needed_skills: localSkills
         }, { headers: { Authorization: `Bearer ${token}` } });
         
+        // FIX: Reload data to get consistent object structure
         if (token) fetchTeamData(token);
         setIsEditingSkills(false);
         setSuggestions(null); 
@@ -147,7 +160,10 @@ export default function TeamDetails() {
     const token = Cookies.get("token");
     try {
       await axios.post(`http://localhost:8000/teams/${teamId}/roadmap`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      
+      // FIX: Reload full data instead of setting raw response to avoid Key Errors
       if (token) fetchTeamData(token);
+      
     } catch (err) { alert("AI Generation failed."); } 
     finally { setIsGenerating(false); }
   };
@@ -167,24 +183,36 @@ export default function TeamDetails() {
               <p className="text-gray-400 max-w-2xl text-lg">{team.description}</p>
             </div>
             
-            {/* ONLY SHOW RECRUIT BUTTON TO LEADER */}
-            {isLeader && (
-                // --- FIX: Include Project ID in the URL ---
-                <Link href={`/matches?type=users&projectId=${team.id}`}>
-                    <button className="px-6 py-3 bg-white text-black rounded-lg font-bold hover:bg-gray-200 transition flex items-center gap-2 shadow-lg">
-                        <UserPlus className="w-5 h-5 text-purple-600" /> Recruit Teammates
+            <div className="flex flex-col gap-2">
+                {/* RECRUIT BUTTON */}
+                {isLeader && (
+                    <Link href={`/matches?type=users&projectId=${team.id}`}>
+                        <button className="w-full px-6 py-3 bg-white text-black rounded-lg font-bold hover:bg-gray-200 transition flex items-center justify-center gap-2 shadow-lg">
+                            <UserPlus className="w-5 h-5 text-purple-600" /> Recruit
+                        </button>
+                    </Link>
+                )}
+                {/* TEAM CHAT BUTTON LOGIC */}
+                {isLeader && (
+                    <button 
+                        onClick={team.chat_group_id ? () => router.push(`/chat?targetId=${team.chat_group_id}`) : createTeamChat} 
+                        className="w-full px-6 py-3 bg-gray-800 text-blue-400 border border-blue-900 rounded-lg font-bold hover:bg-gray-700 transition flex items-center justify-center gap-2"
+                    >
+                        <MessageSquare className="w-5 h-5" /> 
+                        {team.chat_group_id ? "Open Team Chat" : "Create Team Chat"}
                     </button>
-                </Link>
-            )}
+                )}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {/* --- SKILLS MANAGER --- */}
+              {/* --- SKILLS MANAGER (Restricted) --- */}
               <div className="md:col-span-2 bg-gray-900/50 p-6 rounded-2xl border border-gray-800">
                 <div className="flex justify-between items-center mb-4">
                     <h3 className="font-bold flex items-center gap-2">
                         <Code2 className="text-purple-400 w-5 h-5" /> Tech Stack
                     </h3>
+                    {/* HIDE EDIT IF NOT LEADER */}
                     {isLeader && !isEditingSkills && (
                         <button onClick={() => setIsEditingSkills(true)} className="text-xs text-purple-400 hover:text-purple-300 font-mono border border-purple-500/30 px-3 py-1 rounded">Edit Stack</button>
                     )}
@@ -196,7 +224,6 @@ export default function TeamDetails() {
                     )}
                 </div>
 
-                {/* AI Suggestions Panel */}
                 {isEditingSkills && suggestions && (suggestions.add.length > 0 || suggestions.remove.length > 0) && (
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="mb-4 bg-black/40 border border-blue-500/30 rounded-xl p-3">
                         <h4 className="text-[10px] font-bold text-blue-400 mb-2 uppercase">AI Suggestions</h4>
@@ -240,6 +267,7 @@ export default function TeamDetails() {
                   </h3>
                   <div className="space-y-3">
                       {team.members.map((m: any, i: number) => {
+                          // SAFETY CHECK: Ensure we have an object
                           if (typeof m === 'string') return null;
                           return (
                             <div key={m.id || i} className="flex items-center justify-between">
@@ -250,6 +278,7 @@ export default function TeamDetails() {
                                         {m.id === team.leader_id && <span className="text-[10px] text-yellow-500 font-mono">LEADER</span>}
                                     </div>
                                 </div>
+                                {/* Remove Button (Leader Only) */}
                                 {isLeader && m.id !== team.leader_id && (
                                     <button onClick={() => removeMember(m.id)} className="text-gray-600 hover:text-red-500">
                                         <Trash2 className="w-4 h-4"/>
@@ -269,6 +298,7 @@ export default function TeamDetails() {
                 <h2 className="text-2xl font-bold flex items-center gap-3">
                     <Calendar className="text-purple-500" /> Execution Roadmap
                 </h2>
+                {/* HIDE GENERATE IF NOT LEADER */}
                 {isLeader && team.project_roadmap && team.project_roadmap.phases && (
                     <button onClick={generateRoadmap} disabled={isGenerating} className="text-xs flex items-center gap-2 text-gray-400 hover:text-white transition">
                         {isGenerating ? <Loader2 className="w-3 h-3 animate-spin"/> : <RefreshCw className="w-3 h-3"/>} Regenerate

@@ -1,19 +1,19 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
 from app.models import User, Team, Swipe, Match, Notification
 from app.auth.dependencies import get_current_user
 from app.services.matching_service import calculate_project_match, calculate_user_compatibility
+from beanie.operators import Or # <--- IMPORT THIS
 import traceback
 
 router = APIRouter()
 
-# --- Input/Output Models ---
 class SwipeRequest(BaseModel):
     target_id: str
     direction: str 
-    type: str      
-    related_id: Optional[str] = None # Project ID context
+    type: str 
+    related_id: Optional[str] = None
 
 class MatchResponse(BaseModel):
     id: str
@@ -23,36 +23,30 @@ class MatchResponse(BaseModel):
     role: str
     project_id: str
     project_name: str
+    status: str # <--- NEW FIELD
 
-# --- Helper ---
 async def create_match(user_id: str, project_id: str, leader_id: str):
-    existing = await Match.find_one(
-        Match.user_id == user_id, 
-        Match.project_id == project_id
-    )
+    existing = await Match.find_one(Match.user_id == user_id, Match.project_id == project_id)
     if existing: return
 
     await Match(user_id=user_id, project_id=project_id, leader_id=leader_id).insert()
     
-    # Notify User (Candidate) - "You connected!"
-    project = await Team.get(project_id)
-    p_name = project.name if project else "a project"
-    
-    await Notification(
-        recipient_id=user_id, sender_id=leader_id, 
-        message=f"New Connection! You matched with {p_name}.", type="match", related_id=project_id
-    ).insert()
-    
-    # Notify Leader - "New Connection!"
-    candidate = await User.get(user_id)
-    name = candidate.username if candidate else "A new member"
-    
-    await Notification(
-        recipient_id=leader_id, sender_id=user_id, 
-        message=f"New Connection! {name} matched with {p_name}.", type="match", related_id=project_id
-    ).insert()
-
-# --- Routes ---
+    # Notifications
+    try:
+        await Notification(
+            recipient_id=user_id, sender_id=leader_id, 
+            message=f"You matched with a project!", type="match", related_id=project_id
+        ).insert()
+        
+        candidate = await User.get(user_id)
+        c_name = candidate.username if candidate else "Someone"
+        
+        await Notification(
+            recipient_id=leader_id, sender_id=user_id, 
+            message=f"{c_name} matched with your project!", type="match", related_id=project_id
+        ).insert()
+    except:
+        pass # Don't fail match if notif fails
 
 @router.get("/projects")
 async def match_projects_for_user(current_user: User = Depends(get_current_user)):
@@ -72,12 +66,8 @@ async def match_projects_for_user(current_user: User = Depends(get_current_user)
     return scored_projects
 
 @router.get("/users")
-async def match_teammates_for_user(
-    project_id: Optional[str] = None, 
-    current_user: User = Depends(get_current_user)
-):
+async def match_teammates_for_user(project_id: Optional[str] = None, current_user: User = Depends(get_current_user)):
     all_users = await User.find_all().to_list()
-    
     exclude_ids = {str(current_user.id)}
     
     if project_id:
@@ -108,16 +98,16 @@ async def match_teammates_for_user(
 @router.post("/swipe")
 async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_current_user)):
     try:
-        # Validate ID string
-        if data.target_id == "[object Object]" or not data.target_id:
-            raise HTTPException(status_code=400, detail="Invalid Target ID")
+        # Validate ID
+        if not data.target_id or data.target_id == "[object Object]":
+            return {"status": "error", "message": "Invalid ID"}
 
         await Swipe(
             swiper_id=str(current_user.id),
             target_id=data.target_id,
             direction=data.direction,
             type=data.type,
-            related_id=data.related_id 
+            related_id=data.related_id
         ).insert()
         
         if data.direction == "left":
@@ -131,11 +121,12 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
             if project and project.members:
                 leader_id = project.members[0]
                 
+                # FIX: Use proper Beanie OR operator
                 reverse_swipe = await Swipe.find_one(
                     Swipe.swiper_id == leader_id,
                     Swipe.target_id == str(current_user.id),
                     Swipe.direction == "right",
-                    {"$or": [{"related_id": str(project.id)}, {"related_id": None}]}
+                    Or(Swipe.related_id == str(project.id), Swipe.related_id == None)
                 )
                 
                 if reverse_swipe:
@@ -154,7 +145,6 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
             target_project_id = data.related_id 
             
             if target_project_id:
-                # Specific project context
                 reverse_swipe = await Swipe.find_one(
                     Swipe.swiper_id == target_user_id,
                     Swipe.target_id == target_project_id,
@@ -164,7 +154,6 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                     is_match = True
                     await create_match(target_user_id, target_project_id, str(current_user.id))
                 else:
-                    # FIX: Send LIKE notification, NOT Invite
                     proj = await Team.get(target_project_id)
                     p_name = proj.name if proj else "a project"
                     await Notification(
@@ -173,10 +162,14 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                         type="like", related_id=target_project_id
                     ).insert()
             else:
-                # Legacy (Global context)
+                # Legacy check
                 my_projects = await Team.find(Team.members == str(current_user.id)).to_list()
                 for project in my_projects:
-                    reverse_swipe = await Swipe.find_one(Swipe.swiper_id == target_user_id, Swipe.target_id == str(project.id), Swipe.direction == "right")
+                    reverse_swipe = await Swipe.find_one(
+                        Swipe.swiper_id == target_user_id, 
+                        Swipe.target_id == str(project.id), 
+                        Swipe.direction == "right"
+                    )
                     if reverse_swipe:
                         is_match = True
                         await create_match(target_user_id, str(project.id), str(current_user.id))
@@ -208,7 +201,8 @@ async def get_my_matches(current_user: User = Depends(get_current_user)):
                 "contact": leader.email,
                 "role": "Team Leader",
                 "project_id": str(project.id),
-                "project_name": project.name
+                "project_name": project.name,
+                "status": m.status # <--- Pass status
             })
 
     for m in matches_as_leader:
@@ -222,7 +216,8 @@ async def get_my_matches(current_user: User = Depends(get_current_user)):
                 "contact": candidate.email,
                 "role": "Teammate",
                 "project_id": str(project.id),
-                "project_name": project.name
+                "project_name": project.name,
+                "status": m.status # <--- Pass status
             })
             
     return results
