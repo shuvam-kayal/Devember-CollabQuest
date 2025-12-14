@@ -1,9 +1,9 @@
 import asyncio
 import os
 from app.database import init_db
-from app.models import User, Team, Swipe, Match, Notification
+from app.models import User, Team, Swipe, Match, Notification, Message, ChatGroup
 
-# --- WINDOWS FIX ---
+# Windows Fix
 if os.name == "nt":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
@@ -11,22 +11,24 @@ async def clean():
     print("🔌 Connecting to Database...")
     await init_db()
     
-    print("🧹 Deleting ALL Users...")
+    print("🧹 Deleting Users...")
     await User.delete_all()
     
-    print("🧹 Deleting ALL Teams...")
+    print("🧹 Deleting Teams...")
     await Team.delete_all()
     
-    print("🧹 Deleting ALL Swipes...")
+    print("🧹 Deleting Swipes & Matches...")
     await Swipe.delete_all()
-    
-    print("🧹 Deleting ALL Matches...")
     await Match.delete_all()
     
-    print("🧹 Deleting ALL Notifications...")
+    print("🧹 Deleting Messages & Groups...")
+    await Message.delete_all()
+    await ChatGroup.delete_all()
+    
+    print("🧹 Deleting Notifications...")
     await Notification.delete_all()
     
-    print("✨ Database is now empty and sparkling clean!")
+    print("✨ Database is sparkling clean!")
 
 if __name__ == "__main__":
     asyncio.run(clean())

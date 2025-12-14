@@ -79,3 +79,34 @@ async def suggest_tech_stack(description: str, current_stack: list[str]):
     except Exception as e:
         print(f"AI Suggestion Error: {e}")
         return {"add": [], "remove": []}
+    
+
+# --- NEW: INTEREST EXPANSION ---
+async def expand_interests(interests: list[str]):
+    """
+    Takes raw interests (e.g. ['crypto']) and returns expanded synonyms 
+    (e.g. ['crypto', 'blockchain', 'web3', 'finance']).
+    This allows matching even if users use different words.
+    """
+    if not interests: return []
+    
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    prompt = f"""
+    You are a Matching Algorithm.
+    Input Interests: {interests}
+    
+    Task: Normalize these tags and add 2-3 relevant synonyms/categories for each to improve matching. 
+    Fix typos. Return a flat list of strings.
+    
+    Example Input: ["ML", "reactjs"]
+    Example Output: ["machine learning", "ai", "data science", "react", "frontend", "javascript"]
+    
+    Return ONLY valid JSON array of strings. Lowercase.
+    """
+    try:
+        response = model.generate_content(prompt)
+        clean = response.text.replace("```json", "").replace("```", "").strip()
+        return json.loads(clean)
+    except Exception as e:
+        print(f"AI Expansion Failed: {e}")
+        return interests # Fallback to original
