@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from typing import List
+from typing import List, Optional
 from app.models import Notification, User
 from app.auth.dependencies import get_current_user
 from beanie.operators import In
@@ -13,16 +13,20 @@ async def get_notifications(current_user: User = Depends(get_current_user)):
     ).sort("-created_at").to_list()
     return notifs
 
-# --- UPDATED: Accepts status query param ---
 @router.put("/{notif_id}/read")
-async def mark_read(notif_id: str, status: str = "read", current_user: User = Depends(get_current_user)):
+async def mark_read(notif_id: str, status: Optional[str] = None, current_user: User = Depends(get_current_user)):
     """
-    Mark as read AND update status (accepted/rejected).
+    Mark as read. Only update action_status if a specific status (accepted/rejected) is passed.
     """
     notif = await Notification.get(notif_id)
     if notif and notif.recipient_id == str(current_user.id):
         notif.is_read = True
-        notif.action_status = status # Save the decision
+        
+        # FIX: Only update status if it is a valid action. 
+        # Prevents "read" string from overwriting None and hiding buttons.
+        if status and status in ["accepted", "rejected"]:
+            notif.action_status = status
+            
         await notif.save()
     return {"status": "ok"}
 

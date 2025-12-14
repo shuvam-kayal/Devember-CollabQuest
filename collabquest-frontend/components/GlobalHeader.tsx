@@ -4,7 +4,7 @@ import Cookies from "js-cookie";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
-    ShieldCheck, Bell, MessageSquare, CheckCircle, XCircle, X
+    ShieldCheck, Bell, MessageSquare, Check, X, Loader2, AlertTriangle
 } from "lucide-react";
 import Link from "next/link";
 
@@ -12,6 +12,7 @@ interface UserProfile {
   username: string;
   avatar_url: string;
   trust_score: number;
+  _id: string;
 }
 
 interface Notification {
@@ -29,6 +30,7 @@ export default function GlobalHeader() {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
+  const [processingId, setProcessingId] = useState<string | null>(null);
   const notifRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -39,7 +41,15 @@ export default function GlobalHeader() {
         fetchUnreadCount(token);
     }
     document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    
+    // Listen for refresh triggers from other pages
+    const handleRefresh = () => { if(token) fetchNotifications(token); };
+    window.addEventListener("triggerNotificationRefresh", handleRefresh);
+    
+    return () => {
+        document.removeEventListener("mousedown", handleClickOutside);
+        window.removeEventListener("triggerNotificationRefresh", handleRefresh);
+    };
   }, []);
 
   const handleClickOutside = (event: MouseEvent) => {
@@ -52,11 +62,18 @@ export default function GlobalHeader() {
     try {
       const res = await axios.get("http://localhost:8000/users/me", { headers: { Authorization: `Bearer ${jwt}` } });
       setUser(res.data);
-      // Connect WS for header updates
       const ws = new WebSocket(`ws://localhost:8000/chat/ws/${res.data._id || res.data.id}`);
-      ws.onmessage = () => { 
-          setUnreadCount(p => p + 1); 
-          fetchNotifications(jwt); 
+      ws.onmessage = (event) => { 
+          const data = JSON.parse(event.data);
+          if (data.event === "notification") {
+              setNotifications(prev => [data.notification, ...prev]);
+              window.dispatchEvent(new Event("dashboardUpdate"));
+          } else if (data.event === "team_deleted") {
+              alert(data.message);
+              window.location.href = "/dashboard";
+          } else {
+              setUnreadCount(p => p + 1); 
+          }
       };
     } catch (e) { console.error(e); }
   };
@@ -80,31 +97,65 @@ export default function GlobalHeader() {
       setShowNotifDropdown(newState);
       if (newState) {
           const token = Cookies.get("token");
-          // Mark non-actionable as read locally
-          setNotifications(prev => prev.map(n => (n.type === "team_invite" || n.type === "join_request") ? n : { ...n, is_read: true }));
+          // Don't auto-read actionable items until voted/decided
+          setNotifications(prev => prev.map(n => (['team_invite', 'join_request', 'deletion_request'].includes(n.type)) ? n : { ...n, is_read: true }));
           try { await axios.post("http://localhost:8000/notifications/read-all", {}, { headers: { Authorization: `Bearer ${token}` } }); } catch(e) {}
       }
   }
 
-  // Helper actions inside notification dropdown
-  const handleNotificationAction = async (notif: Notification) => {
+  // --- ACTIONS ---
+  const handleVote = async (notif: Notification, decision: 'approve' | 'reject') => {
       if(!notif.related_id) return;
       const token = Cookies.get("token");
+      setProcessingId(notif._id);
       try {
-          // Simplified action logic just for the header dropdown
+          const res = await axios.post(`http://localhost:8000/teams/${notif.related_id}/delete/vote`, { decision }, { headers: { Authorization: `Bearer ${token}` } });
+          
+          if (res.data.status === "deleted") {
+              alert("Consensus reached. Team deleted.");
+              window.location.href = "/dashboard";
+          } else {
+              // Update local state to "voted"
+              setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, is_read: true, action_status: "voted" } : n));
+              window.dispatchEvent(new Event("dashboardUpdate")); // Updates Team Details page if open
+          }
+      } catch (err) { alert("Failed to vote"); } finally { setProcessingId(null); }
+  };
+
+  const handleAccept = async (notif: Notification) => {
+      if(!notif.related_id) return;
+      const token = Cookies.get("token");
+      setProcessingId(notif._id);
+      try {
           let target = notif.type === "join_request" ? notif.sender_id : "ME"; 
-          // Note: Full logic requires user ID, for hackathon assuming endpoint handles "ME" or we fetch user again. 
-          // To keep this component simple, we might just redirect or do a quick post. 
-          // For now, let's just refresh list. 
-          // Ideally, actions should happen on Dashboard.
-          // Let's redirect to Dashboard for actions to ensure context.
-          window.location.href = "/dashboard";
-      } catch (err) {}
+          if (target === "ME" && user) target = user._id;
+          
+          await axios.post(`http://localhost:8000/teams/${notif.related_id}/members`, { target_user_id: target }, { headers: { Authorization: `Bearer ${token}` } });
+          // Backend now handles the notification status update, but we update UI optimistically
+          await axios.put(`http://localhost:8000/notifications/${notif._id}/read?status=accepted`, {}, { headers: { Authorization: `Bearer ${token}` } });
+          
+          setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, is_read: true, action_status: "accepted" } : n));
+          window.dispatchEvent(new Event("dashboardUpdate"));
+      } catch (err) { alert("Action failed"); } finally { setProcessingId(null); }
+  };
+
+  const handleReject = async (notif: Notification) => {
+      if(!notif.related_id) return;
+      if(!confirm("Reject this request?")) return;
+      const token = Cookies.get("token");
+      setProcessingId(notif._id);
+      try {
+          await axios.post(`http://localhost:8000/teams/${notif.related_id}/reject`, { target_user_id: notif.sender_id }, { headers: { Authorization: `Bearer ${token}` } });
+          await axios.put(`http://localhost:8000/notifications/${notif._id}/read?status=rejected`, {}, { headers: { Authorization: `Bearer ${token}` } });
+          
+          setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, is_read: true, action_status: "rejected" } : n));
+          window.dispatchEvent(new Event("dashboardUpdate"));
+      } catch (err) { alert("Action failed"); } finally { setProcessingId(null); }
   };
 
   const getScoreColor = (score: number) => { if (score >= 8) return "text-green-400"; if (score >= 5) return "text-yellow-400"; return "text-red-400"; };
   
-  if (!user) return <div className="h-20"></div>; // Placeholder to prevent jump
+  if (!user) return <div className="h-20"></div>; 
 
   return (
     <header className="flex items-center justify-between mb-8 py-4 border-b border-gray-800">
@@ -128,17 +179,44 @@ export default function GlobalHeader() {
             <AnimatePresence>
                 {showNotifDropdown && (
                     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 overflow-hidden">
-                        <div className="p-3 border-b border-gray-800 font-bold text-sm bg-gray-950">Notifications</div>
-                        <div className="max-h-64 overflow-y-auto">
+                        <div className="p-3 border-b border-gray-800 font-bold text-sm bg-gray-950 flex justify-between">
+                            <span>Notifications</span>
+                            <button onClick={() => setShowNotifDropdown(false)}><X className="w-4 h-4 text-gray-500"/></button>
+                        </div>
+                        <div className="max-h-80 overflow-y-auto">
                             {notifications.length === 0 ? <p className="p-4 text-gray-500 text-sm text-center">No notifications</p> : (
-                                notifications.map(n => (
-                                    <div key={n._id} className={`p-3 border-b border-gray-800 hover:bg-gray-800/50 transition ${n.is_read ? 'opacity-50' : ''}`}>
+                                notifications.map(n => {
+                                    const isDecided = n.action_status === 'accepted' || n.action_status === 'rejected' || n.action_status === 'voted';
+                                    const isInvite = n.type === 'team_invite' || n.type === 'join_request';
+                                    const isVote = n.type === 'deletion_request';
+                                    
+                                    return (
+                                    <div key={n._id} className={`p-3 border-b border-gray-800 ${!n.is_read ? 'bg-gray-800/50' : ''}`}>
                                         <p className="text-xs text-gray-300 mb-2">{n.message}</p>
-                                        {(n.type === 'team_invite' || n.type === 'join_request') && !n.is_read && (
-                                            <Link href="/dashboard"><button className="w-full text-xs py-1.5 bg-blue-600 text-white rounded font-bold">View in Dashboard</button></Link>
+                                        
+                                        {/* INVITE BUTTONS */}
+                                        {isInvite && !isDecided && (
+                                            <div className="flex gap-2 mt-2">
+                                                <button onClick={() => handleAccept(n)} disabled={processingId === n._id} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{processingId === n._id ? <Loader2 className="w-3 h-3 animate-spin"/> : <><Check className="w-3 h-3"/> Accept</>}</button>
+                                                <button onClick={() => handleReject(n)} disabled={processingId === n._id} className="flex-1 bg-red-600 hover:bg-red-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1"><X className="w-3 h-3"/> Reject</button>
+                                            </div>
+                                        )}
+
+                                        {/* DELETION VOTE BUTTONS */}
+                                        {isVote && !isDecided && (
+                                            <div className="flex gap-2 mt-2">
+                                                <button onClick={() => handleVote(n, 'approve')} disabled={processingId === n._id} className="flex-1 bg-red-600 hover:bg-red-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1"><AlertTriangle className="w-3 h-3"/> Delete</button>
+                                                <button onClick={() => handleVote(n, 'reject')} disabled={processingId === n._id} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">Keep</button>
+                                            </div>
+                                        )}
+                                        
+                                        {isDecided && (
+                                            <div className={`text-xs mt-1 font-bold ${n.action_status === 'accepted' ? 'text-green-400' : n.action_status === 'voted' ? 'text-blue-400' : 'text-red-400'}`}>
+                                                {n.action_status === 'accepted' ? 'Accepted' : n.action_status === 'voted' ? 'Voted' : 'Rejected'}
+                                            </div>
                                         )}
                                     </div>
-                                ))
+                                )})
                             )}
                         </div>
                     </motion.div>
@@ -153,7 +231,6 @@ export default function GlobalHeader() {
                 {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{unreadCount}</span>}
             </button>
         </Link>
-
         <Link href="/profile">
             <div className="flex items-center gap-3 bg-gray-900 px-4 py-2 rounded-full border border-gray-800 shadow-sm cursor-pointer hover:border-gray-600 transition">
                 <ShieldCheck className={getScoreColor(user.trust_score) + " h-5 w-5"} />

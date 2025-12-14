@@ -29,11 +29,12 @@ class MatchResponse(BaseModel):
 
 async def create_match(user_id: str, project_id: str, leader_id: str):
     existing = await Match.find_one(Match.user_id == user_id, Match.project_id == project_id)
-    if existing: return
+    if existing: return True # Return True if match exists/created
 
     await Match(user_id=user_id, project_id=project_id, leader_id=leader_id).insert()
     
     try:
+        # Notify Candidate
         await Notification(
             recipient_id=user_id, sender_id=leader_id, 
             message=f"You matched with a project!", type="match", related_id=project_id
@@ -42,11 +43,13 @@ async def create_match(user_id: str, project_id: str, leader_id: str):
         candidate = await User.get(user_id)
         c_name = candidate.username if candidate else "Someone"
         
+        # Notify Leader
         await Notification(
             recipient_id=leader_id, sender_id=user_id, 
             message=f"{c_name} matched with your project!", type="match", related_id=project_id
         ).insert()
     except: pass
+    return True
 
 @router.get("/projects")
 async def match_projects_for_user(current_user: User = Depends(get_current_user)):
@@ -102,12 +105,29 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
         if not data.target_id or data.target_id == "[object Object]":
             return {"status": "error", "message": "Invalid ID"}
 
-        # Cooldown check
+        # Check for existing swipe
         last_swipe = await Swipe.find(
             Swipe.swiper_id == str(current_user.id),
             Swipe.target_id == data.target_id
         ).sort("-timestamp").first_or_none()
 
+        # RETRY LOGIC: If previously swiped Right, check if we missed a match (maybe leader liked us later)
+        if last_swipe and last_swipe.direction == "right" and data.direction == "right":
+            if data.type == "project":
+                project = await Team.get(data.target_id)
+                if project and project.members:
+                    leader_id = project.members[0]
+                    # Check Leader's swipe
+                    reverse = await Swipe.find_one(
+                        Swipe.swiper_id == leader_id,
+                        Swipe.target_id == str(current_user.id),
+                        Swipe.direction == "right"
+                    )
+                    if reverse:
+                        await create_match(str(current_user.id), str(project.id), leader_id)
+                        return {"status": "liked", "is_match": True}
+
+        # Cooldown check
         if last_swipe:
             time_diff = datetime.now() - last_swipe.timestamp
             if time_diff < timedelta(days=3):
@@ -266,26 +286,22 @@ async def get_team_matches(team_id: str, current_user: User = Depends(get_curren
             })
     return results
 
-# --- NEW: Delete Match Endpoint ---
-@router.delete("/{project_id}/{user_id}")
+# --- FIXED DELETE ROUTE (Added /delete prefix to match frontend) ---
+@router.delete("/delete/{project_id}/{user_id}")
 async def delete_match_entry(project_id: str, user_id: str, current_user: User = Depends(get_current_user)):
     """
     Completely removes a match and associated likes/swipes.
     """
-    # 1. Delete Match Record
     await Match.find(
         Match.project_id == project_id, 
         Match.user_id == user_id
     ).delete()
     
-    # 2. Delete Swipes (To remove "Like")
-    # Delete User's Swipe on Project
     await Swipe.find(
         Swipe.swiper_id == user_id, 
         Swipe.target_id == project_id
     ).delete()
     
-    # Delete Leader's Swipe on User (Need to find leader)
     team = await Team.get(project_id)
     if team and team.members:
         leader_id = team.members[0]

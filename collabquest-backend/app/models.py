@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 from beanie import Document
 from pydantic import BaseModel, Field
 from datetime import datetime
@@ -17,6 +17,13 @@ class Skill(BaseModel):
     name: str
     level: str
 
+# --- NEW: DELETION REQUEST MODEL ---
+class DeletionRequest(BaseModel):
+    is_active: bool = False
+    initiator_id: str
+    votes: Dict[str, str] = {} # user_id -> "approve" or "reject"
+    created_at: datetime = Field(default_factory=datetime.now)
+
 class User(Document):
     github_id: str = Field(..., description="Unique ID from GitHub")
     username: str
@@ -24,20 +31,13 @@ class User(Document):
     avatar_url: Optional[str] = None
     trust_score: float = Field(default=5.0)
     is_verified_student: bool = False
-    
-    # --- UPDATED PROFILE FIELDS ---
     skills: List[Skill] = []
     interests: List[str] = [] 
-    expanded_interests: List[str] = [] # <--- NEW: Hidden field for AI matching
+    expanded_interests: List[str] = []
     about: Optional[str] = "I love building cool things!"
-    
-    # Replaces 'availability_hours'
     availability: List[DayAvailability] = [] 
-    
-    class Settings:
-        name = "users"
+    class Settings: name = "users"
 
-# ... (Keep Team, Swipe, Match, Notification, Message, ChatGroup unchanged) ...
 class Team(Document):
     name: str
     description: str
@@ -45,6 +45,12 @@ class Team(Document):
     needed_skills: List[str] = []
     project_roadmap: Optional[dict] = None
     created_at: datetime = Field(default_factory=datetime.now)
+    target_members: int = Field(default=4)
+    target_completion_date: Optional[datetime] = None 
+    
+    # --- NEW FIELD ---
+    deletion_request: Optional[DeletionRequest] = None
+    
     class Settings: name = "teams"
 
 class Swipe(Document):
