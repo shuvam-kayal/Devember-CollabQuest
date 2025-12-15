@@ -18,12 +18,15 @@ class Skill(BaseModel):
     level: str
 
 class User(Document):
-    github_id: str = Field(..., description="Unique ID from GitHub")
+    github_id: Optional[str] = Field(None, description="Unique ID from GitHub")
+    google_id: Optional[str] = Field(None, description="Unique ID from Google")
     username: str
     email: str
+    password_hash: Optional[str] = None  # For email/password auth
     avatar_url: Optional[str] = None
     trust_score: float = Field(default=5.0)
     is_verified_student: bool = False
+    auth_method: str = Field(default="github")  # "github", "google", or "email"
     
     # --- UPDATED PROFILE FIELDS ---
     skills: List[Skill] = []
