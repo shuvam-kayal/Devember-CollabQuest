@@ -1,5 +1,6 @@
 import os
 import httpx
+import bcrypt
 from datetime import datetime, timedelta
 from jose import jwt
 from dotenv import load_dotenv
@@ -8,6 +9,8 @@ load_dotenv()
 
 GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID")
 GITHUB_CLIENT_SECRET = os.getenv("GITHUB_CLIENT_SECRET")
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 
@@ -60,3 +63,42 @@ def create_access_token(data: dict):
     expire = datetime.utcnow() + timedelta(days=7) # Token lasts 7 days
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+def hash_password(password: str) -> str:
+    """Hash a password using bcrypt"""
+    # Truncate password to 72 bytes (bcrypt limit) and hash
+    password_bytes = password[:72].encode('utf-8')
+    salt = bcrypt.gensalt(rounds=12)
+    return bcrypt.hashpw(password_bytes, salt).decode('utf-8')
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against its hash"""
+    # Truncate password to 72 bytes (bcrypt limit) and verify
+    password_bytes = plain_password[:72].encode('utf-8')
+    hashed_bytes = hashed_password.encode('utf-8')
+    return bcrypt.checkpw(password_bytes, hashed_bytes)
+
+async def get_google_token(code: str, redirect_uri: str):
+    """Exchange Google authorization code for access token"""
+    url = "https://oauth2.googleapis.com/token"
+    data = {
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "code": code,
+        "grant_type": "authorization_code",
+        "redirect_uri": redirect_uri
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, data=data)
+        return response.json().get("access_token")
+
+async def get_google_user(token: str):
+    """Fetch user profile from Google using access token"""
+    async with httpx.AsyncClient() as client:
+        headers = {"Authorization": f"Bearer {token}"}
+        response = await client.get(
+            "https://www.googleapis.com/oauth2/v2/userinfo",
+            headers=headers
+        )
+        return response.json()

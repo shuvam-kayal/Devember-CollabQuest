@@ -6,3 +6,6 @@ pydantic
 httpx       # To talk to GitHub API
 python-jose # To create JWT tokens for your app
 python-dotenv
+bcrypt     # For password hashing
+google-auth-httplib2 # For Google OAuth
+google-generativeai # For AI roadmap features

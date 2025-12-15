@@ -30,13 +30,18 @@ class CompletionRequest(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
 
 class User(Document):
-    github_id: str = Field(..., description="Unique ID from GitHub")
+    github_id: Optional[str] = Field(None, description="Unique ID from GitHub")
+    google_id: Optional[str] = Field(None, description="Unique ID from Google")
     username: str
     email: str
+    password_hash: Optional[str] = None  # For email/password auth
     avatar_url: Optional[str] = None
     trust_score: float = Field(default=5.0)
     rating_count: int = Field(default=1) # <--- NEW: To track average
     is_verified_student: bool = False
+    auth_method: str = Field(default="github")  # "github", "google", or "email"
+    
+    # --- UPDATED PROFILE FIELDS ---
     skills: List[Skill] = []
     interests: List[str] = [] 
     expanded_interests: List[str] = []
