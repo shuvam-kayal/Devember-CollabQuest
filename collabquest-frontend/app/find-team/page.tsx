@@ -6,6 +6,7 @@ import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Users, Code2, ArrowRight, Sparkles, UserPlus, X } from "lucide-react";
 import Link from "next/link"; 
+import GlobalHeader from "@/components/GlobalHeader"; // <--- ADDED
 
 const PRESET_SKILLS = [
   "React", "Python", "Node.js", "TypeScript", "Next.js", 
@@ -75,14 +76,14 @@ export default function FindTeam() {
     setNeededSkills(neededSkills.filter(s => s !== skillToRemove));
   };
 
-  // Filter Logic
   const myProjects = teams.filter(t => t.members.includes(userId));
   const otherProjects = teams.filter(t => !t.members.includes(userId));
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white p-8">
-      <div className="max-w-6xl mx-auto">
-        
+    <div className="min-h-screen bg-gray-950 text-white">
+      <GlobalHeader /> {/* <--- ADDED */}
+      
+      <div className="max-w-6xl mx-auto p-8">
         <div className="flex justify-between items-center mb-10">
           <div>
             <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">Marketplace</h1>
@@ -109,7 +110,6 @@ export default function FindTeam() {
                         <ProjectCard 
                             key={team._id} 
                             team={team} 
-                            // FIX: Only true if I am the LEADER (first member)
                             isLeader={team.members[0] === userId} 
                         />
                     ))}

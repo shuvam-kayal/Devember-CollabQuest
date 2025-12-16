@@ -4,13 +4,12 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 from app.models import User, Team, Swipe, Match, Notification
 from app.auth.dependencies import get_current_user
-from app.services.matching_service import calculate_match_score, calculate_user_compatibility, calculate_project_match
+from app.services.matching_service import calculate_project_match, calculate_user_compatibility
 from beanie.operators import Or
 import traceback
 
 router = APIRouter()
 
-# --- Models ---
 class SwipeRequest(BaseModel):
     target_id: str
     direction: str 
@@ -28,20 +27,16 @@ class MatchResponse(BaseModel):
     status: str
     rejected_by: Optional[str] = None
 
-# --- Helper ---
 async def create_match(user_id: str, project_id: str, leader_id: str):
     existing = await Match.find_one(Match.user_id == user_id, Match.project_id == project_id)
-    if existing: return
+    if existing: return True
 
     await Match(user_id=user_id, project_id=project_id, leader_id=leader_id).insert()
     
-    # Notify User
     try:
-        project = await Team.get(project_id)
-        p_name = project.name if project else "a project"
         await Notification(
             recipient_id=user_id, sender_id=leader_id, 
-            message=f"You matched with {p_name}!", type="match", related_id=project_id
+            message=f"You matched with a project!", type="match", related_id=project_id
         ).insert()
         
         candidate = await User.get(user_id)
@@ -52,26 +47,16 @@ async def create_match(user_id: str, project_id: str, leader_id: str):
             message=f"{c_name} matched with your project!", type="match", related_id=project_id
         ).insert()
     except: pass
-
-# --- Routes ---
+    return True
 
 @router.get("/projects")
 async def match_projects_for_user(current_user: User = Depends(get_current_user)):
-    """Find projects for the candidate"""
     all_teams = await Team.find_all().to_list()
-    # Filter: Show projects I am NOT in
     candidates = [t for t in all_teams if str(current_user.id) not in t.members]
     
     scored_projects = []
     for team in candidates:
-        # Fetch members for advanced scoring
-        members = []
-        for mid in team.members:
-            u = await User.get(mid)
-            if u: members.append(u)
-            
-        score = await calculate_match_score(current_user, team, members)
-        
+        score = calculate_project_match(current_user, team)
         team_dict = team.dict()
         team_dict["id"] = str(team.id)
         team_dict["_id"] = str(team.id)
@@ -82,42 +67,26 @@ async def match_projects_for_user(current_user: User = Depends(get_current_user)
     return scored_projects
 
 @router.get("/users")
-async def match_teammates_for_user(
-    project_id: Optional[str] = None, 
-    current_user: User = Depends(get_current_user)
-):
-    """Find teammates for the leader (optionally for a specific project)"""
+async def match_teammates_for_user(project_id: Optional[str] = None, current_user: User = Depends(get_current_user)):
     all_users = await User.find_all().to_list()
     exclude_ids = {str(current_user.id)}
     
-    target_project = None
     if project_id:
         target_project = await Team.get(project_id)
         if target_project:
             for member_id in target_project.members:
                 exclude_ids.add(member_id)
     else:
-        # Legacy/General mode: Exclude members of ALL my teams
         my_teams = await Team.find(Team.members == str(current_user.id)).to_list()
-        for t in my_teams:
-            for m_id in t.members:
-                exclude_ids.add(m_id)
+        for team in my_teams:
+            for member_id in team.members:
+                exclude_ids.add(member_id)
 
     candidates = [u for u in all_users if str(u.id) not in exclude_ids]
 
     scored_users = []
     for candidate in candidates:
-        if target_project:
-            # Score Candidate vs Project
-             members = []
-             for mid in target_project.members:
-                 u = await User.get(mid)
-                 if u: members.append(u)
-             score = await calculate_match_score(candidate, target_project, members)
-        else:
-             # Legacy User-User Score
-             score = calculate_user_compatibility(current_user, candidate)
-        
+        score = calculate_user_compatibility(current_user, candidate)
         user_dict = candidate.dict()
         user_dict["id"] = str(candidate.id)
         user_dict["_id"] = str(candidate.id)
@@ -127,25 +96,37 @@ async def match_teammates_for_user(
     scored_users.sort(key=lambda x: x["match_score"], reverse=True)
     return scored_users
 
+
 @router.post("/swipe")
 async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_current_user)):
     try:
-        # Validate ID
         if not data.target_id or data.target_id == "[object Object]":
-            raise HTTPException(status_code=400, detail="Invalid Target ID")
+            return {"status": "error", "message": "Invalid ID"}
 
-        # --- 3-DAY COOLDOWN CHECK ---
+        # Check for existing swipe
         last_swipe = await Swipe.find(
             Swipe.swiper_id == str(current_user.id),
             Swipe.target_id == data.target_id
         ).sort("-timestamp").first_or_none()
 
+        # Retry logic: If swiped right before, try to match again (in case other party swiped right later)
+        if last_swipe and last_swipe.direction == "right" and data.direction == "right":
+            if data.type == "project":
+                project = await Team.get(data.target_id)
+                if project and project.members:
+                    leader_id = project.members[0]
+                    # Check if Leader swiped User
+                    reverse = await Swipe.find_one(Swipe.swiper_id == leader_id, Swipe.target_id == str(current_user.id), Swipe.direction == "right")
+                    if reverse:
+                        await create_match(str(current_user.id), str(project.id), leader_id)
+                        return {"status": "liked", "is_match": True}
+
+        # Cooldown check
         if last_swipe:
             time_diff = datetime.now() - last_swipe.timestamp
             if time_diff < timedelta(days=3):
                  return {"status": "cooldown", "message": "You already liked this recently."}
 
-        # Record Swipe
         await Swipe(
             swiper_id=str(current_user.id),
             target_id=data.target_id,
@@ -159,17 +140,17 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
 
         is_match = False
         
-        # CASE A: User swipes Project
         if data.type == "project":
+            # User swiping Project
             project = await Team.get(data.target_id)
             if project and project.members:
                 leader_id = project.members[0]
                 
+                # Check if Leader previously swiped User
                 reverse_swipe = await Swipe.find_one(
                     Swipe.swiper_id == leader_id,
                     Swipe.target_id == str(current_user.id),
-                    Swipe.direction == "right",
-                    Or(Swipe.related_id == str(project.id), Swipe.related_id == None)
+                    Swipe.direction == "right"
                 )
                 
                 if reverse_swipe:
@@ -182,12 +163,13 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                         type="like", related_id=str(project.id)
                     ).insert()
 
-        # CASE B: Leader swipes User
         elif data.type == "user":
+            # Leader swiping User
             target_user_id = data.target_id
             target_project_id = data.related_id 
             
             if target_project_id:
+                # Specific project context
                 reverse_swipe = await Swipe.find_one(
                     Swipe.swiper_id == target_user_id,
                     Swipe.target_id == target_project_id,
@@ -205,9 +187,12 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                         type="like", related_id=target_project_id
                     ).insert()
             else:
-                # Global/Legacy Swipe
+                # Generic swipe by Leader (Try to match with any of their projects)
                 my_projects = await Team.find(Team.members == str(current_user.id)).to_list()
+                
+                matched = False
                 for project in my_projects:
+                    # Check if User swiped this Project
                     reverse_swipe = await Swipe.find_one(
                         Swipe.swiper_id == target_user_id, 
                         Swipe.target_id == str(project.id), 
@@ -216,7 +201,25 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                     if reverse_swipe:
                         is_match = True
                         await create_match(target_user_id, str(project.id), str(current_user.id))
-                        break
+                        matched = True
+                        break # Stop after first match
+                
+                if not matched and my_projects:
+                    # Send generic notification if no immediate match
+                    primary_project = my_projects[0]
+                    existing_notif = await Notification.find_one(
+                        Notification.recipient_id == target_user_id,
+                        Notification.sender_id == str(current_user.id),
+                        Notification.type == "like"
+                    )
+                    if not existing_notif:
+                        await Notification(
+                            recipient_id=target_user_id, 
+                            sender_id=str(current_user.id),
+                            message=f"A Team Leader ({current_user.username}) is interested in you!",
+                            type="like", 
+                            related_id=str(primary_project.id)
+                        ).insert()
 
         return {"status": "liked", "is_match": is_match}
 
@@ -247,7 +250,7 @@ async def get_my_matches(current_user: User = Depends(get_current_user)):
                     "project_id": str(project.id),
                     "project_name": project.name,
                     "status": m.status,
-                    "rejected_by": m.rejected_by # <--- Return this for UI
+                    "rejected_by": m.rejected_by
                 })
         except: continue
 
@@ -265,8 +268,62 @@ async def get_my_matches(current_user: User = Depends(get_current_user)):
                     "project_id": str(project.id),
                     "project_name": project.name,
                     "status": m.status,
-                    "rejected_by": m.rejected_by # <--- Return this for UI
+                    "rejected_by": m.rejected_by
                 })
         except: continue
             
     return results
+
+@router.get("/team/{team_id}", response_model=List[MatchResponse])
+async def get_team_matches(team_id: str, current_user: User = Depends(get_current_user)):
+    team = await Team.get(team_id)
+    if not team:
+        raise HTTPException(404, "Team not found")
+        
+    if str(current_user.id) != team.members[0]:
+        raise HTTPException(403, "Only the Team Leader can view candidates")
+        
+    matches = await Match.find(
+        Match.project_id == team_id,
+        Match.leader_id == str(current_user.id)
+    ).to_list()
+    
+    results = []
+    for m in matches:
+        candidate = await User.get(m.user_id)
+        if candidate:
+            results.append({
+                "id": str(candidate.id),
+                "name": candidate.username,
+                "avatar": candidate.avatar_url or "https://github.com/shadcn.png",
+                "contact": candidate.email,
+                "role": "Teammate",
+                "project_id": str(team.id),
+                "project_name": team.name,
+                "status": m.status,
+                "rejected_by": m.rejected_by
+            })
+    return results
+
+@router.delete("/delete/{project_id}/{user_id}")
+async def delete_match_entry(project_id: str, user_id: str, current_user: User = Depends(get_current_user)):
+    await Match.find(
+        Match.project_id == project_id, 
+        Match.user_id == user_id
+    ).delete()
+    
+    await Swipe.find(
+        Swipe.swiper_id == user_id, 
+        Swipe.target_id == project_id
+    ).delete()
+    
+    team = await Team.get(project_id)
+    if team and team.members:
+        leader_id = team.members[0]
+        await Swipe.find(
+             Swipe.swiper_id == leader_id,
+             Swipe.target_id == user_id,
+             Swipe.direction == "right"
+        ).delete()
+             
+    return {"status": "deleted"}

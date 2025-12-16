@@ -4,6 +4,7 @@ import bcrypt
 from datetime import datetime, timedelta
 from jose import jwt
 from dotenv import load_dotenv
+from jose.exceptions import JWTError
 
 load_dotenv()
 
@@ -102,3 +103,11 @@ async def get_google_user(token: str):
             headers=headers
         )
         return response.json()
+    
+def verify_token(token: str):
+    """Decode and verify the JWT token manually"""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return payload
+    except JWTError:
+        return None
