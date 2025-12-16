@@ -30,6 +30,9 @@ collabquest-frontend/npm-debug.log*
 collabquest-frontend/yarn-debug.log*
 collabquest-frontend/yarn-error.log*
 
+__pycache__/
+*.pyc
+
 # Add these lines to your .gitignore file
 echo "__pycache__/" >> .gitignore
 echo "*.pyc" >> .gitignore
