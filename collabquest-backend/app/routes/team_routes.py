@@ -1,13 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Header
 from typing import List, Optional, Dict
 from datetime import datetime, timedelta
-from app.models import Team, User, Notification, Match, ChatGroup, DeletionRequest, CompletionRequest, Swipe
+from app.models import Team, User, Notification, Match, ChatGroup, DeletionRequest, CompletionRequest, Swipe, Task
 from app.auth.dependencies import get_current_user
 from app.services.ai_roadmap import generate_roadmap, suggest_tech_stack
 from app.routes.chat_routes import manager 
 from pydantic import BaseModel
 import math
 from app.auth.utils import verify_token # Helper to decode manually if needed
+import uuid # <--- ADD THIS
 
 router = APIRouter()
 
@@ -60,10 +61,25 @@ class TeamDetailResponse(BaseModel):
     status: str = "active"
     has_liked: bool = False # <--- NEW FIELD
 
-# --- ROUTES ---
+# --- UPDATED TASK INPUT ---
+class CreateTaskRequest(BaseModel):
+    description: str
+    assignee_id: str
+    deadline: str # FIX: Accept string from frontend to avoid validation error
+
+class TaskDetailResponse(BaseModel):
+    id: str
+    description: str
+    assignee_id: str
+    assignee_name: str
+    assignee_avatar: str | None
+    deadline: datetime
+    status: str
+    verification_votes: int
+    required_votes: int
+    is_overdue: bool # Calculated field
 
 async def get_optional_user(authorization: Optional[str] = Header(None)) -> Optional[User]:
-    """Helper to get user if token exists, else None"""
     if not authorization: return None
     try:
         token = authorization.split(" ")[1]
@@ -436,3 +452,162 @@ async def reset_match(team_id: str, req: InviteRequest, current_user: User = Dep
         match_record.last_action_at = datetime.now()
         await match_record.save()
     return {"status": "reset"}
+
+@router.post("/{team_id}/tasks")
+async def create_task(team_id: str, req: CreateTaskRequest, current_user: User = Depends(get_current_user)):
+    team = await Team.get(team_id)
+    if not team: raise HTTPException(404)
+    if str(current_user.id) != team.members[0]: raise HTTPException(403, "Only Leader can assign tasks")
+    
+    # FIX: Parse string manually to ensure compatibility
+    try:
+        dt = datetime.fromisoformat(req.deadline)
+    except ValueError:
+        # Fallback if frontend sends simple date or different format
+        dt = datetime.now() + timedelta(days=1) 
+
+    new_task = Task(
+        id=str(uuid.uuid4()),
+        description=req.description,
+        assignee_id=req.assignee_id,
+        deadline=dt 
+    )
+    
+    team.tasks.append(new_task)
+    await team.save()
+    
+    if req.assignee_id != str(current_user.id):
+        await Notification(
+            recipient_id=req.assignee_id, sender_id=str(current_user.id),
+            message=f"New task assigned: {req.description}", type="info", related_id=team_id
+        ).insert()
+        await manager.send_personal_message({"event": "dashboardUpdate"}, req.assignee_id)
+        
+    return {"status": "created"}
+
+@router.delete("/{team_id}/tasks/{task_id}")
+async def delete_task(team_id: str, task_id: str, current_user: User = Depends(get_current_user)):
+    team = await Team.get(team_id)
+    if not team: raise HTTPException(404)
+    if str(current_user.id) != team.members[0]: raise HTTPException(403, "Only Leader can delete tasks")
+    
+    # Filter out the task
+    initial_len = len(team.tasks)
+    team.tasks = [t for t in team.tasks if t.id != task_id]
+    
+    if len(team.tasks) == initial_len:
+        raise HTTPException(404, "Task not found")
+        
+    await team.save()
+    return {"status": "deleted"}
+
+@router.post("/{team_id}/tasks/{task_id}/submit")
+async def submit_task(team_id: str, task_id: str, current_user: User = Depends(get_current_user)):
+    team = await Team.get(team_id)
+    if not team: raise HTTPException(404)
+    task = next((t for t in team.tasks if t.id == task_id), None)
+    if not task: raise HTTPException(404)
+    if str(current_user.id) != task.assignee_id: raise HTTPException(403)
+    
+    task.status = "review"
+    task.verification_votes = [] # Reset votes on new submission
+    task.rework_votes = []       # Reset rework votes
+    await team.save()
+    
+    # Notify team
+    for m_id in team.members:
+        if m_id != str(current_user.id):
+            await Notification(recipient_id=m_id, sender_id=str(current_user.id), message=f"Review needed: {task.description}", type="info", related_id=team_id).insert()
+            await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
+    return {"status": "submitted"}
+
+@router.post("/{team_id}/tasks/{task_id}/verify")
+async def verify_task(team_id: str, task_id: str, current_user: User = Depends(get_current_user)):
+    team = await Team.get(team_id)
+    if not team: raise HTTPException(404)
+    task = next((t for t in team.tasks if t.id == task_id), None)
+    if not task or task.status != "review": raise HTTPException(400, "Invalid task")
+    
+    uid = str(current_user.id)
+    if uid == task.assignee_id: raise HTTPException(403, "Self-verification not allowed")
+    if uid in task.verification_votes or uid in task.rework_votes: raise HTTPException(400, "Already voted")
+    
+    task.verification_votes.append(uid)
+    
+    # Logic: 20% of Team (min 1 person if team > 1)
+    total_reviewers = len(team.members) # or len(team.members) - 1 to exclude assignee
+    required = math.ceil(total_reviewers * 0.2)
+    
+    if len(task.verification_votes) >= required:
+        task.status = "completed"
+        task.completed_at = datetime.now()
+        await Notification(recipient_id=task.assignee_id, sender_id=uid, message=f"Task '{task.description}' Verified!", type="info", related_id=team_id).insert()
+    
+    await team.save()
+    return {"status": "voted"}
+
+@router.post("/{team_id}/tasks/{task_id}/rework")
+async def request_rework(team_id: str, task_id: str, current_user: User = Depends(get_current_user)):
+    team = await Team.get(team_id)
+    if not team: raise HTTPException(404)
+    task = next((t for t in team.tasks if t.id == task_id), None)
+    if not task or task.status != "review": raise HTTPException(400, "Invalid task")
+    
+    uid = str(current_user.id)
+    if uid == task.assignee_id: raise HTTPException(403)
+    if uid in task.verification_votes or uid in task.rework_votes: raise HTTPException(400, "Already voted")
+    
+    task.rework_votes.append(uid)
+    
+    # Logic: 30% request rework
+    total_reviewers = len(team.members)
+    required = math.ceil(total_reviewers * 0.3)
+    
+    if len(task.rework_votes) >= required:
+        task.status = "rework" # Send back
+        await Notification(recipient_id=task.assignee_id, sender_id=uid, message=f"Rework requested for '{task.description}'", type="info", related_id=team_id).insert()
+    
+    await team.save()
+    return {"status": "voted"}
+
+@router.get("/{team_id}/tasks", response_model=List[TaskDetailResponse])
+async def get_team_tasks(team_id: str):
+    team = await Team.get(team_id)
+    if not team: raise HTTPException(404)
+    
+    results = []
+    now = datetime.now()
+    
+    for t in team.tasks:
+        assignee = await User.get(t.assignee_id)
+        
+        # 1-Day Notification Trigger (Lazy Check)
+        time_left = t.deadline - now
+        if t.status in ["pending", "rework"] and timedelta(hours=0) < time_left < timedelta(hours=24):
+            # Check if we already notified recently? (Simplification: Just check logic, in prod use separate job)
+            # Ideally we'd store 'last_reminded' on task. For now, we assume user checks dashboard.
+            pass 
+
+        is_overdue = False
+        if t.status == "completed" and t.completed_at:
+            if t.completed_at > t.deadline: is_overdue = True
+        elif t.status != "completed":
+            if now > t.deadline: is_overdue = True
+            
+        results.append({
+            "id": t.id,
+            "description": t.description,
+            "assignee_id": t.assignee_id,
+            "assignee_name": assignee.username if assignee else "Unknown",
+            "assignee_avatar": assignee.avatar_url,
+            "deadline": t.deadline,
+            "status": t.status,
+            "verification_votes": len(t.verification_votes),
+            "required_votes": math.ceil(len(team.members) * 0.2),
+            "rework_votes": len(t.rework_votes),
+            "required_rework": math.ceil(len(team.members) * 0.3),
+            "is_overdue": is_overdue
+        })
+    
+    results.sort(key=lambda x: (x["status"] == "completed", not x["is_overdue"], x["deadline"]))
+    return results

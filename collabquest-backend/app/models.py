@@ -2,6 +2,7 @@ from typing import List, Optional, Dict
 from beanie import Document
 from pydantic import BaseModel, Field
 from datetime import datetime
+import uuid # <--- IMPORTANT IMPORT
 
 class TimeRange(BaseModel):
     start: str 
@@ -49,6 +50,18 @@ class User(Document):
     availability: List[DayAvailability] = [] 
     class Settings: name = "users"
 
+class Task(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    description: str
+    assignee_id: str
+    deadline: datetime
+    status: str = "pending" # "pending", "review", "completed"
+    completed_at: Optional[datetime] = None # <--- NEW: Track finish time
+    warning_sent: bool = False # <--- NEW: To track 24h warning
+    verification_votes: List[str] = [] # List of user_ids who approved
+    rework_votes: List[str] = [] # <--- NEW: Track rework requests
+    created_at: datetime = Field(default_factory=datetime.now)
+
 class Team(Document):
     name: str
     description: str
@@ -62,6 +75,7 @@ class Team(Document):
     status: str = "active" # <--- NEW: 'active' or 'completed'
     deletion_request: Optional[DeletionRequest] = None
     completion_request: Optional[CompletionRequest] = None # <--- NEW
+    tasks: List[Task] = []
     
     class Settings: name = "teams"
 
