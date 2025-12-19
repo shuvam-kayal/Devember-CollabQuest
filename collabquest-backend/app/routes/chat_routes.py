@@ -1,9 +1,10 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
 from typing import List, Optional, Dict
 from pydantic import BaseModel
-from app.models import Message, User, ChatGroup, Team, Match
+from app.models import Message, User, ChatGroup, Team, Match, Block, UnreadCount
 from app.auth.dependencies import get_current_user
-from beanie.operators import Or, In
+from beanie.operators import Or, In, And
+from datetime import datetime
 import traceback
 
 router = APIRouter()
@@ -21,32 +22,223 @@ class GroupUpdate(BaseModel):
 class AddMemberRequest(BaseModel):
     user_id: str
 
-# --- WebSocket Manager (Keep as is) ---
+# --- WebSocket Manager ---
 class ConnectionManager:
     def __init__(self):
-        self.active_connections: dict[str, WebSocket] = {}
+        self.active_connections: dict[str, List[WebSocket]] = {}
     async def connect(self, websocket: WebSocket, user_id: str):
         await websocket.accept()
-        self.active_connections[user_id] = websocket
-    def disconnect(self, user_id: str):
-        if user_id in self.active_connections: del self.active_connections[user_id]
+        if user_id not in self.active_connections:
+            self.active_connections[user_id] = []
+        self.active_connections[user_id].append(websocket)
+    def disconnect(self, websocket: WebSocket, user_id: str):
+        if user_id in self.active_connections:
+            if websocket in self.active_connections[user_id]:
+                self.active_connections[user_id].remove(websocket)
+            if not self.active_connections[user_id]:
+                del self.active_connections[user_id]
     def is_online(self, user_id: str) -> bool:
         return user_id in self.active_connections
     async def send_personal_message(self, message: dict, user_id: str):
         if user_id in self.active_connections:
-            await self.active_connections[user_id].send_json(message)
+            for connection in self.active_connections[user_id]:
+                try:
+                    await connection.send_json(message)
+                except Exception:
+                    continue
 
 manager = ConnectionManager()
 
 # --- ROUTES ---
 
-# 1. Get Group Details (with Members)
+@router.post("/block/{user_id}")
+async def block_user(user_id: str, current_user: User = Depends(get_current_user)):
+    existing = await Block.find_one(Block.blocker_id == str(current_user.id), Block.blocked_id == user_id)
+    if not existing:
+        await Block(blocker_id=str(current_user.id), blocked_id=user_id).insert()
+    return {"status": "blocked"}
+
+@router.post("/unblock/{user_id}")
+async def unblock_user(user_id: str, current_user: User = Depends(get_current_user)):
+    await Block.find_one(Block.blocker_id == str(current_user.id), Block.blocked_id == user_id).delete()
+    return {"status": "unblocked"}
+
+@router.post("/request/{user_id}/accept")
+async def accept_chat(user_id: str, current_user: User = Depends(get_current_user)):
+    if user_id not in current_user.accepted_chat_requests:
+        current_user.accepted_chat_requests.append(user_id)
+        await current_user.save()
+    return {"status": "accepted"}
+
+@router.post("/read/{target_id}")
+async def mark_messages_read(target_id: str, current_user: User = Depends(get_current_user)):
+    uid = str(current_user.id)
+    group = await ChatGroup.get(target_id)
+    if group:
+        uc = await UnreadCount.find_one(UnreadCount.user_id == uid, UnreadCount.target_id == target_id)
+        if not uc:
+            uc = UnreadCount(user_id=uid, target_id=target_id, msg_count=0)
+            await uc.insert()
+        else:
+            uc.msg_count = 0
+            uc.last_read_at = datetime.now()
+            await uc.save()
+    else:
+        # Mark all messages from this sender to me as read
+        await Message.find({"sender_id": target_id, "recipient_id": uid, "is_read": {"$ne": True}}).update({"$set": {"is_read": True}})
+    
+    return {"status": "read"}
+
+@router.get("/conversations")
+async def get_conversations(current_user: User = Depends(get_current_user)):
+    try:
+        uid = str(current_user.id)
+        results = []
+        messages = await Message.find({"$or": [{"sender_id": uid}, {"recipient_id": uid}]}).sort("-timestamp").to_list(None)
+        partners_map = {}
+        
+        my_groups = await ChatGroup.find(In(ChatGroup.members, [uid])).to_list(None)
+        group_ids = [str(g.id) for g in my_groups]
+
+        blocked_by_me = await Block.find(Block.blocker_id == uid).to_list(None)
+        blocked_by_me_ids = {b.blocked_id for b in blocked_by_me}
+        
+        blocked_me = await Block.find(Block.blocked_id == uid).to_list(None)
+        blocked_me_ids = {b.blocker_id for b in blocked_me}
+
+        # Process Direct Messages
+        for m in messages:
+            partner_id = m.sender_id if m.sender_id != uid else m.recipient_id
+            if partner_id in group_ids or m.recipient_id in group_ids: continue # Skip group msgs here
+            
+            if partner_id not in partners_map: 
+                partners_map[partner_id] = { "last_msg": m, "unread": 0 }
+            
+            # Count unread DMs
+            if m.recipient_id == uid and m.is_read is not True: 
+                partners_map[partner_id]["unread"] += 1
+
+        for pid, data in partners_map.items():
+            try:
+                if pid in blocked_me_ids:
+                    results.append({
+                        "id": pid,
+                        "username": "User", 
+                        "avatar_url": "https://github.com/shadcn.png",
+                        "is_online": False,
+                        "unread_count": 0,
+                        "type": "user",
+                        "last_timestamp": data["last_msg"].timestamp,
+                        "last_message": "Message hidden",
+                        "is_blocked_by_them": True
+                    })
+                else:
+                    user = await User.get(pid)
+                    if user: 
+                        results.append({
+                            "id": str(user.id), 
+                            "username": user.username or "Unknown", 
+                            "avatar_url": user.avatar_url or "https://github.com/shadcn.png", 
+                            "is_online": manager.is_online(pid), 
+                            "unread_count": data["unread"], 
+                            "type": "user", 
+                            "last_timestamp": data["last_msg"].timestamp,
+                            "last_message": data["last_msg"].content,
+                            "is_blocked_by_me": pid in blocked_by_me_ids
+                        })
+            except Exception: continue
+
+        # Process Groups
+        try:
+            unread_docs = await UnreadCount.find(UnreadCount.user_id == uid).to_list(None)
+            unread_map = {uc.target_id: uc.msg_count for uc in unread_docs}
+        except: unread_map = {}
+
+        for g in my_groups:
+            last_msg = await Message.find(Message.recipient_id == str(g.id)).sort("-timestamp").first_or_none()
+            timestamp = last_msg.timestamp if last_msg else g.created_at
+            avatar = g.avatar_url if g.avatar_url else f"https://api.dicebear.com/7.x/initials/svg?seed={g.name}"
+            badge = unread_map.get(str(g.id), 0)
+
+            results.append({
+                "id": str(g.id), 
+                "username": g.name or "Group", 
+                "avatar_url": avatar, 
+                "is_online": False, 
+                "type": "group", 
+                "admin_id": g.admin_id, 
+                "last_timestamp": timestamp, 
+                "last_message": last_msg.content if last_msg else "No messages yet", 
+                "unread_count": badge,
+                "member_count": len(g.members),
+                "is_team_group": g.is_team_group # <--- ADDED THIS FIELD
+            })
+
+        results.sort(key=lambda x: x["last_timestamp"], reverse=True)
+        return results
+
+    except Exception as e:
+        print(f"Chat List Error: {e}")
+        traceback.print_exc()
+        return []
+
+@router.get("/history/{target_id}")
+async def get_chat_history(target_id: str, current_user: User = Depends(get_current_user)):
+    uid = str(current_user.id)
+    group = await ChatGroup.get(target_id)
+    messages = []
+    meta = {"blocked_by_me": False, "blocked_by_them": False, "is_pending": False}
+    
+    if group:
+        # Clear Group Unread
+        uc = await UnreadCount.find_one(UnreadCount.user_id == uid, UnreadCount.target_id == target_id)
+        if uc:
+             uc.msg_count = 0
+             uc.last_read_at = datetime.now()
+             await uc.save()
+        else:
+             # Create entry if missing
+             await UnreadCount(user_id=uid, target_id=target_id, msg_count=0).insert()
+             
+        messages = await Message.find(Message.recipient_id == target_id).sort("timestamp").to_list(None)
+    else:
+        # DM Logic
+        block_by_me = await Block.find_one(Block.blocker_id == uid, Block.blocked_id == target_id)
+        block_by_them = await Block.find_one(Block.blocker_id == target_id, Block.blocked_id == uid)
+        
+        meta["blocked_by_me"] = bool(block_by_me)
+        meta["blocked_by_them"] = bool(block_by_them)
+        
+        received = await Message.find(Message.sender_id == target_id, Message.recipient_id == uid).count()
+        sent = await Message.find(Message.sender_id == uid, Message.recipient_id == target_id).count()
+        
+        if received > 0 and sent == 0 and target_id not in current_user.accepted_chat_requests:
+            meta["is_pending"] = True
+
+        # Clear DM Unread
+        await Message.find({"sender_id": target_id, "recipient_id": uid, "is_read": {"$ne": True}}).update({"$set": {"is_read": True}})
+        
+        messages = await Message.find({"$or": [{"sender_id": uid, "recipient_id": target_id}, {"sender_id": target_id, "recipient_id": uid}]}).sort("timestamp").to_list(None)
+
+    enriched_messages = []
+    for m in messages:
+        m_dict = m.dict()
+        m_dict['id'] = str(m.id)
+        m_dict['timestamp'] = str(m.timestamp)
+        # Fetch sender info
+        sender = await User.get(m.sender_id)
+        m_dict['sender_name'] = sender.username if sender else "Unknown"
+        enriched_messages.append(m_dict)
+        
+    return {"messages": enriched_messages, "meta": meta}
+
+# ... (Groups CRUD routes from previous remain the same) ...
+# [Include get_group_details, update_group, remove_group_member, create_group, add_group_member, create_team_group, get_contacts]
 @router.get("/groups/{group_id}")
 async def get_group_details(group_id: str, current_user: User = Depends(get_current_user)):
     group = await ChatGroup.get(group_id)
     if not group: raise HTTPException(404, "Group not found")
     
-    # Enrich Member Data
     members_data = []
     for uid in group.members:
         u = await User.get(uid)
@@ -66,40 +258,30 @@ async def get_group_details(group_id: str, current_user: User = Depends(get_curr
         "members": members_data
     }
 
-# 2. Update Group (Name/Avatar)
 @router.put("/groups/{group_id}")
 async def update_group(group_id: str, data: GroupUpdate, current_user: User = Depends(get_current_user)):
     group = await ChatGroup.get(group_id)
     if not group: raise HTTPException(404, "Group not found")
-    
-    # Allow any member to rename? Or just Admin? Let's say Admin.
-    if group.admin_id != str(current_user.id):
-        raise HTTPException(403, "Only admin can edit group info")
+    if group.admin_id != str(current_user.id): raise HTTPException(403, "Only admin can edit group info")
         
     if data.name: group.name = data.name
     if data.avatar_url: group.avatar_url = data.avatar_url
     await group.save()
     return group
 
-# 3. Remove Member
 @router.delete("/groups/{group_id}/members/{user_id}")
 async def remove_group_member(group_id: str, user_id: str, current_user: User = Depends(get_current_user)):
     group = await ChatGroup.get(group_id)
     if not group: raise HTTPException(404, "Group not found")
     
-    if group.admin_id != str(current_user.id):
-        raise HTTPException(403, "Only admin can remove members")
-        
-    if user_id == group.admin_id:
-        raise HTTPException(400, "Admin cannot be removed")
+    if group.admin_id != str(current_user.id): raise HTTPException(403, "Only admin can remove members")
+    if user_id == group.admin_id: raise HTTPException(400, "Admin cannot be removed")
 
     if user_id in group.members:
         group.members.remove(user_id)
         await group.save()
         
     return group
-
-# ... (Keep existing routes: create_group, create_team_group, add_group_member, get_contacts, get_conversations, get_chat_history, unread-count, websocket) ...
 
 @router.post("/groups")
 async def create_group(data: GroupCreate, current_user: User = Depends(get_current_user)):
@@ -146,67 +328,14 @@ async def get_contacts(current_user: User = Depends(get_current_user)):
         if user: contacts.append({"id": str(user.id), "username": user.username, "avatar_url": user.avatar_url or "https://github.com/shadcn.png"})
     return contacts
 
-@router.get("/conversations")
-async def get_conversations(current_user: User = Depends(get_current_user)):
-    try:
-        uid = str(current_user.id)
-        results = []
-        messages = await Message.find(Or(Message.sender_id == uid, Message.recipient_id == uid)).sort("-timestamp").to_list()
-        partners_map = {}
-        my_groups = await ChatGroup.find(In(ChatGroup.members, [uid])).to_list()
-        group_ids = [str(g.id) for g in my_groups]
-
-        for m in messages:
-            partner_id = m.sender_id if m.sender_id != uid else m.recipient_id
-            if partner_id in group_ids or m.recipient_id in group_ids: continue
-            if partner_id not in partners_map: partners_map[partner_id] = { "last_msg": m, "unread": 0 }
-            if m.recipient_id == uid and m.is_read is not True: partners_map[partner_id]["unread"] += 1
-
-        for pid, data in partners_map.items():
-            try:
-                user = await User.get(pid)
-                if user: results.append({"id": str(user.id), "username": user.username, "avatar_url": user.avatar_url or "https://github.com/shadcn.png", "is_online": manager.is_online(pid), "unread_count": data["unread"], "type": "user", "last_timestamp": data["last_msg"].timestamp})
-            except: continue
-
-        for g in my_groups:
-            last_msg = await Message.find(Message.recipient_id == str(g.id)).sort("-timestamp").first_or_none()
-            timestamp = last_msg.timestamp if last_msg else g.created_at
-            # Updated to prefer avatar_url if set
-            avatar = g.avatar_url if g.avatar_url else f"https://api.dicebear.com/7.x/initials/svg?seed={g.name}"
-            results.append({"id": str(g.id), "username": g.name, "avatar_url": avatar, "is_online": False, "type": "group", "admin_id": g.admin_id, "last_timestamp": timestamp, "unread_count": 0})
-
-        results.sort(key=lambda x: x["last_timestamp"], reverse=True)
-        return results
-
-    except Exception as e:
-        print(f"Chat List Error: {e}")
-        return []
-
-@router.get("/history/{target_id}")
-async def get_chat_history(target_id: str, current_user: User = Depends(get_current_user)):
-    uid = str(current_user.id)
-    group = await ChatGroup.get(target_id)
-    messages = []
-    if group:
-        messages = await Message.find(Message.recipient_id == target_id).sort("+timestamp").to_list()
-    else:
-        await Message.find({"sender_id": target_id, "recipient_id": uid, "is_read": {"$ne": True}}).update({"$set": {"is_read": True}})
-        messages = await Message.find({"$or": [{"sender_id": uid, "recipient_id": target_id}, {"sender_id": target_id, "recipient_id": uid}]}).sort("+timestamp").to_list()
-
-    enriched_messages = []
-    for m in messages:
-        m_dict = m.dict()
-        m_dict['id'] = str(m.id)
-        m_dict['timestamp'] = str(m.timestamp)
-        sender = await User.get(m.sender_id)
-        m_dict['sender_name'] = sender.username if sender else "Unknown"
-        enriched_messages.append(m_dict)
-    return enriched_messages
-
 @router.get("/unread-count")
 async def get_total_unread(current_user: User = Depends(get_current_user)):
-    count = await Message.find({"recipient_id": str(current_user.id), "is_read": {"$ne": True}}).count()
-    return {"count": count}
+    uid = str(current_user.id)
+    dm_count = await Message.find({"recipient_id": uid, "is_read": {"$ne": True}}).count()
+    group_counts = await UnreadCount.find(UnreadCount.user_id == uid).to_list(None)
+    total_group = sum([g.msg_count for g in group_counts])
+    
+    return {"count": dm_count + total_group}
 
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
@@ -225,10 +354,24 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 payload["id"] = str(msg.id)
                 payload["timestamp"] = str(msg.timestamp)
                 payload["sender_name"] = sender_name
+                
                 group = await ChatGroup.get(recipient_id)
                 if group:
+                    # Group Message: Send to all members
                     for member_id in group.members:
-                        if member_id != user_id: await manager.send_personal_message(payload, member_id)
-                else: await manager.send_personal_message(payload, recipient_id)
-    except WebSocketDisconnect: manager.disconnect(user_id)
-    except Exception: manager.disconnect(user_id)
+                        if member_id != user_id:
+                            uc = await UnreadCount.find_one(UnreadCount.user_id == member_id, UnreadCount.target_id == recipient_id)
+                            if not uc: 
+                                uc = UnreadCount(user_id=member_id, target_id=recipient_id, msg_count=1)
+                                await uc.insert()
+                            else:
+                                uc.msg_count += 1
+                                uc.last_read_at = datetime.now()
+                                await uc.save()
+                            
+                            await manager.send_personal_message({"event": "message", "message": payload}, member_id)
+                else: 
+                    # Direct Message: Send to recipient
+                    await manager.send_personal_message({"event": "message", "message": payload}, recipient_id)
+    except WebSocketDisconnect: manager.disconnect(websocket, user_id)
+    except Exception: manager.disconnect(websocket, user_id)

@@ -2,7 +2,7 @@ import asyncio
 import random
 import os
 from app.database import init_db
-from app.models import User, Team, Skill, DayAvailability, TimeRange
+from app.models import User, Team, Skill, DayAvailability, TimeRange, Question
 
 # Windows Fix
 if os.name == "nt":
@@ -12,27 +12,112 @@ if os.name == "nt":
 SKILLS_POOL = [
     "React", "Python", "Node.js", "TypeScript", "Next.js", "Tailwind", 
     "MongoDB", "Firebase", "Flutter", "Java", "C++", "Rust", "Go", 
-    "Figma", "UI/UX", "AI/ML", "Docker", "AWS", "Solidity"
+    "Figma", "UI/UX", "AI/ML", "Docker", "AWS", "Solidity", 
+    "GraphQL", "PostgreSQL", "Angular", "Vue.js", "Swift"
 ]
 
 INTERESTS_POOL = [
-    "FinTech", "HealthTech", "EdTech", "Social Good", "Blockchain", 
-    "Gaming", "AI Automation", "Sustainability", "E-commerce", "Cybersecurity"
+    "Gaming", "AI Automation", "Sustainability", "E-commerce", "Cybersecurity",
+    "FinTech", "EdTech", "HealthTech", "Robotics", "Blockchain", "Open Source"
 ]
 
+# --- QUESTION BANKS ---
+
+PYTHON_QS = [
+    ("What is the output of print(2 ** 3)?", ["6", "8", "9", "Error"], 1, "easy"),
+    ("Which keyword is used to define a function?", ["func", "def", "function", "define"], 1, "easy"),
+    ("What is a tuple?", ["Mutable list", "Immutable list", "Dictionary", "Set"], 1, "easy"),
+    ("How do you start a comment?", ["//", "#", "/*", "<!--"], 1, "easy"),
+    ("Which is not a valid variable name?", ["my_var", "_var", "2var", "var2"], 2, "easy"),
+    ("What does the 'pass' keyword do?", ["Stops execution", "Does nothing", "Skips loop", "Returns None"], 1, "medium"),
+    ("What is the output of [1, 2] * 2?", ["[1, 2, 2]", "[1, 2, 1, 2]", "[2, 4]", "Error"], 1, "medium"),
+    ("Which data structure is LIFO?", ["Queue", "Stack", "List", "Tree"], 1, "medium"),
+    ("What is a decorator?", ["A class", "A function that modifies another function", "A variable", "A string"], 1, "medium"),
+    ("What is __init__?", ["Constructor", "Destructor", "Import", "Loop"], 0, "medium"),
+    ("What is the GIL?", ["Global Interpreter Lock", "General Interface Logic", "Graphical Interface Loop", "None"], 0, "hard"),
+    ("What is the difference between @staticmethod and @classmethod?", ["None", "Class method takes cls", "Static method takes cls", "Both take self"], 1, "hard"),
+    ("How does Python handle memory management?", ["Manual", "Garbage Collection", "Pointers", "Stack only"], 1, "hard"),
+    ("What is a generator?", ["Function yielding values", "List comprehension", "A loop", "A class"], 0, "hard"),
+    ("What is MRO?", ["Method Resolution Order", "Memory Read Operation", "Main Runtime Object", "None"], 0, "hard")
+]
+
+JS_QS = [
+    ("Which keyword declares a block-scoped variable?", ["var", "let", "val", "const var"], 1, "easy"),
+    ("What does '===' operator do?", ["Assigns value", "Equal value and type", "Equal value only", "None"], 1, "easy"),
+    ("How do you write 'Hello World' in an alert box?", ["msg('Hello World')", "alertBox('Hello World')", "alert('Hello World')", "msgBox('Hello World')"], 2, "easy"),
+    ("Which symbol is used for comments in JS?", ["//", "#", "<!--", "**"], 0, "easy"),
+    ("What is the correct way to write an array?", ["['a', 'b']", "{'a', 'b'}", "('a', 'b')", "None"], 0, "easy"),
+    ("What is a Closure?", ["Function inside function", "Loop", "Object", "Array"], 0, "medium"),
+    ("What is the output of '2' + 2?", ["4", "22", "NaN", "Error"], 1, "medium"),
+    ("Which array method adds elements to the end?", ["push()", "pop()", "shift()", "unshift()"], 0, "medium"),
+    ("What does 'this' refer to?", ["Global object", "Current object", "Function", "Variable"], 1, "medium"),
+    ("What is the purpose of JSON.stringify()?", ["Parse JSON", "Convert obj to string", "Convert string to obj", "None"], 1, "medium"),
+    ("What is hoisting?", ["Moving declarations to top", "Lifting weights", "Creating variables", "None"], 0, "hard"),
+    ("What is the Event Loop?", ["Handles async callbacks", "A for loop", "DOM event", "Error handler"], 0, "hard"),
+    ("Explain Promises.", ["Synchronous code", "Future value placeholder", "Function", "Array"], 1, "hard"),
+    ("What is the difference between null and undefined?", ["Same", "Null is object, undefined is type", "Null is type", "None"], 1, "hard"),
+    ("What is a generator function?", ["Function that can pause/resume", "Creates objects", "Loop", "None"], 0, "hard")
+]
+
+CPP_QS = [
+    ("Which symbol is used for comments?", ["//", "#", "<!--", "--"], 0, "easy"),
+    ("What is the correct way to include a library?", ["import <iostream>", "include <iostream>", "#include <iostream>", "using <iostream>"], 2, "easy"),
+    ("How do you print to console?", ["print()", "cout <<", "System.out.println", "echo"], 1, "easy"),
+    ("Which data type is used for 'A'?", ["char", "string", "int", "bool"], 0, "easy"),
+    ("How do you declare a variable?", ["int x;", "x = 10;", "var x;", "declare x"], 0, "easy"),
+    ("What is a pointer?", ["Holds address", "Holds value", "A class", "A loop"], 0, "medium"),
+    ("What is a reference?", ["Alias for variable", "Copy of variable", "Pointer", "None"], 0, "medium"),
+    ("What is the size of int?", ["2 bytes", "4 bytes", "8 bytes", "Depends on compiler"], 3, "medium"),
+    ("What is the keyword for inheritance?", ["extends", "inherits", ":", "implements"], 2, "medium"),
+    ("What is encapsulation?", ["Hiding data", "Sharing data", "Global data", "None"], 0, "medium"),
+    ("What is a destructor?", ["~ClassName()", "ClassName()", "delete()", "free()"], 0, "hard"),
+    ("What is virtual function?", ["Static function", "Runtime polymorphism", "Compile time", "None"], 1, "hard"),
+    ("What is a template?", ["Generic programming", "A class", "A function", "A file"], 0, "hard"),
+    ("Difference between struct and class?", ["Visibility", "Size", "None", "Name"], 0, "hard"),
+    ("What is a pure virtual function?", ["Has no body", "Has body", "Static", "None"], 0, "hard")
+]
+
+REACT_QS = [
+    ("What is a Component?", ["Function returning UI", "Database", "Server", "Loop"], 0, "easy"),
+    ("What is State?", ["Internal data storage", "External data", "Global variable", "None"], 0, "easy"),
+    ("What is Props?", ["Arguments to components", "Internal state", "HTML attribute", "Style"], 0, "easy"),
+    ("What is the entry point of a React app?", ["index.js", "app.js", "main.js", "home.js"], 0, "easy"),
+    ("Which hook handles side effects?", ["useEffect", "useState", "useReducer", "useRef"], 0, "easy"),
+    ("What is useEffect used for?", ["Side effects", "State", "Routing", "Styling"], 0, "medium"),
+    ("What is JSX?", ["Syntax extension for JS", "Java XML", "JSON XML", "None"], 0, "medium"),
+    ("How do you create a ref?", ["useRef()", "createRef()", "ref()", "this.ref"], 0, "medium"),
+    ("What is Redux?", ["State management library", "Database", "Server", "Framework"], 0, "medium"),
+    ("How to prevent re-renders?", ["React.memo", "useEffect", "useState", "None"], 0, "medium"),
+    ("What is the Virtual DOM?", ["Lightweight copy of DOM", "Real DOM", "Browser API", "None"], 0, "hard"),
+    ("What is Context API?", ["Prop drilling solution", "State management", "Routing", "API calls"], 0, "hard"),
+    ("What are Hooks?", ["Use state/effects in functions", "Class methods", "Event handlers", "None"], 0, "hard"),
+    ("What is higher-order component?", ["Function taking component returning component", "Parent component", "Child component", "None"], 0, "hard"),
+    ("What is reconciliation?", ["Diffing algorithm", "State update", "Routing", "None"], 0, "hard")
+]
+
+# --- USERS ---
 USERS_DATA = [
     ("Alice", "Frontend Wizard"), ("Bob", "Backend Guru"), ("Charlie", "Full Stack Dev"),
     ("Diana", "AI Researcher"), ("Ethan", "Mobile App Expert"), ("Fiona", "UI/UX Designer"),
     ("George", "DevOps Engineer"), ("Hannah", "Blockchain Enthusiast"), ("Ian", "Security Analyst"),
-    ("Julia", "Product Manager")
+    ("Julia", "Product Manager"), ("Kevin", "Data Scientist"), ("Liam", "Game Developer"),
+    ("Mia", "Cloud Architect"), ("Noah", "Embedded Systems"), ("Olivia", "AR/VR Developer"),
+    ("Paul", "Tech Lead"), ("Quinn", "QA Engineer"), ("Rachel", "System Admin"),
+    ("Sam", "Network Engineer"), ("Tina", "Database Admin")
 ]
 
+# --- PROJECTS ---
 PROJECTS_DATA = [
     ("EcoTracker", "AI app to track personal carbon footprint using gamification."),
     ("CryptoDash", "Real-time crypto trading visualization dashboard with alerts."),
     ("StudyBud", "Tinder-style matching app for finding study partners on campus."),
     ("FitQuest", "RPG game that levels up your character when you work out."),
-    ("CodeCollab", "Real-time collaborative code editor with video chat.")
+    ("CodeCollab", "Real-time collaborative code editor with video chat."),
+    ("AutoInvest", "Robo-advisor for stocks using machine learning prediction models."),
+    ("HealthChain", "Secure medical records storage using blockchain technology."),
+    ("SmartHome", "IoT dashboard for controlling smart devices at home."),
+    ("LearnLanguage", "Duolingo clone with VR integration for immersive learning."),
+    ("RecipeGenie", "AI-powered recipe generator based on ingredients you have.")
 ]
 
 # --- HELPERS ---
@@ -69,10 +154,10 @@ async def seed():
 
         created_users = []
         
-        print("🌱 Seeding Users...")
+        print(f"🌱 Seeding {len(USERS_DATA)} Users...")
         for i, (name, bio) in enumerate(USERS_DATA):
             # 1. Random Skills
-            my_skills = [Skill(name=s, level="Intermediate") for s in random.sample(SKILLS_POOL, k=random.randint(3, 6))]
+            my_skills = [Skill(name=s, level=random.choice(["Beginner", "Intermediate", "Expert"])) for s in random.sample(SKILLS_POOL, k=random.randint(3, 6))]
             # 2. Random Interests
             my_interests = random.sample(INTERESTS_POOL, k=random.randint(2, 4))
             # 3. Random Availability Profile
@@ -85,11 +170,15 @@ async def seed():
                 email=f"{name.lower()}@example.com",
                 avatar_url=f"https://api.dicebear.com/7.x/avataaars/svg?seed={name}", 
                 trust_score=round(random.uniform(6.0, 9.8), 1),
+                rating_count=random.randint(1, 100),
                 is_verified_student=True,
-                about=f"{bio}. working on {sched_type} schedule.",
+                auth_method="github",
+                about=f"{bio}. woking on {sched_type} schedule.",
                 skills=my_skills,
                 interests=my_interests,
-                availability=my_avail
+                availability=my_avail,
+                is_looking_for_team=True, # Explicitly set
+                embedding=[] # Initialize empty, will be generated if they login/update
             )
             
             # Upsert
@@ -97,27 +186,55 @@ async def seed():
             if not existing:
                 await user.insert()
                 created_users.append(user)
-                print(f"   - Created {name} ({sched_type})")
+                # print(f"   - Created {name}")
             else:
                 created_users.append(existing)
 
-        print("\n🌱 Seeding Projects...")
+        print(f"✅ Users Seeded.")
+
+        print(f"🌱 Seeding {len(PROJECTS_DATA)} Projects...")
         for title, desc in PROJECTS_DATA:
             leader = random.choice(created_users)
-            needed = random.sample(SKILLS_POOL, k=random.randint(2, 4))
+            needed = random.sample(SKILLS_POOL, k=random.randint(3, 5))
+            active_needed = random.sample(needed, k=min(len(needed), 2)) # Subset active
             
             team = Team(
                 name=title,
                 description=desc,
                 members=[str(leader.id)],
                 needed_skills=needed,
-                project_roadmap={}
+                active_needed_skills=active_needed,
+                project_roadmap={},
+                is_looking_for_members=True,
+                embedding=[]
             )
             
             existing = await Team.find_one(Team.name == title)
             if not existing:
                 await team.insert()
-                print(f"   - Created {title} (Leader: {leader.username})")
+                # print(f"   - Created {title} (Leader: {leader.username})")
+
+        print("✅ Projects Seeded.")
+
+        print("🌱 Seeding Questions...")
+        
+        async def seed_q(qs, skill):
+            count = 0
+            for q in qs:
+                await Question(
+                    skill=skill,
+                    text=q[0],
+                    options=q[1],
+                    correct_index=q[2],
+                    difficulty=q[3]
+                ).insert()
+                count += 1
+            print(f"   - Seeded {count} {skill} Questions")
+
+        await seed_q(PYTHON_QS, "Python")
+        await seed_q(JS_QS, "JavaScript")
+        await seed_q(CPP_QS, "C++")
+        await seed_q(REACT_QS, "React")
 
         print("\n🚀 DONE! Login via: http://localhost:8000/auth/dev/Alice")
 

@@ -4,6 +4,10 @@ import Link from "next/link";
 import { Github, Mail } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Cookies from "js-cookie";
+import api from "@/lib/api";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default function Home() {
   const router = useRouter();
@@ -20,24 +24,21 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/auth/login/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
+      const response = await api.post("/auth/login/email", { email, password });
+      const data = response.data;
 
-      const data = await response.json();
+      // Axios throws on non-2xx, but just in case we are handling it differently:
+      // With axios, response.data IS the data.
 
-      if (!response.ok) {
-        setError(data.detail || "Login failed");
-        return;
-      }
+      // if (!response.ok) logic is handled by catch block in axios usually, 
+      // but let's keep the structure for now if we were using fetch. 
+      // With axios, we catch errors.
 
       // Save token and redirect
-      localStorage.setItem("token", data.token);
+      Cookies.set("token", data.token, { expires: 7 }); // Use cookies for consistency with other pages
       router.push("/dashboard");
-    } catch (err) {
-      setError("An error occurred. Try again.");
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "An error occurred. Try again.");
     } finally {
       setLoading(false);
     }
@@ -49,24 +50,16 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/auth/register/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, username, password }),
-      });
+      const response = await api.post("/auth/register/email", { email, username, password });
+      const data = response.data;
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        setError(data.detail || "Registration failed");
-        return;
-      }
+      // logic handled in catch
 
       // Save token and redirect
-      localStorage.setItem("token", data.token);
+      Cookies.set("token", data.token, { expires: 7 });
       router.push("/dashboard");
-    } catch (err) {
-      setError("An error occurred. Try again.");
+    } catch (err: any) {
+      setError(err.response?.data?.detail || "An error occurred. Try again.");
     } finally {
       setLoading(false);
     }
@@ -86,41 +79,37 @@ export default function Home() {
         <div className="flex gap-2 mb-6 bg-gray-900 p-1 rounded-lg overflow-x-auto">
           <button
             onClick={() => setAuthMode("github")}
-            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${
-              authMode === "github"
-                ? "bg-purple-600 text-white"
-                : "text-gray-400 hover:text-white"
-            }`}
+            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${authMode === "github"
+              ? "bg-purple-600 text-white"
+              : "text-gray-400 hover:text-white"
+              }`}
           >
             GitHub
           </button>
           <button
             onClick={() => setAuthMode("google")}
-            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${
-              authMode === "google"
-                ? "bg-purple-600 text-white"
-                : "text-gray-400 hover:text-white"
-            }`}
+            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${authMode === "google"
+              ? "bg-purple-600 text-white"
+              : "text-gray-400 hover:text-white"
+              }`}
           >
             Google
           </button>
           <button
             onClick={() => setAuthMode("email-login")}
-            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${
-              authMode === "email-login"
-                ? "bg-purple-600 text-white"
-                : "text-gray-400 hover:text-white"
-            }`}
+            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${authMode === "email-login"
+              ? "bg-purple-600 text-white"
+              : "text-gray-400 hover:text-white"
+              }`}
           >
             Email Login
           </button>
           <button
             onClick={() => setAuthMode("email-register")}
-            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${
-              authMode === "email-register"
-                ? "bg-purple-600 text-white"
-                : "text-gray-400 hover:text-white"
-            }`}
+            className={`py-2 px-3 rounded text-xs sm:text-sm font-medium transition whitespace-nowrap ${authMode === "email-register"
+              ? "bg-purple-600 text-white"
+              : "text-gray-400 hover:text-white"
+              }`}
           >
             Sign Up
           </button>
@@ -129,7 +118,7 @@ export default function Home() {
         {/* GitHub Login */}
         {authMode === "github" && (
           <Link
-            href="http://localhost:8000/auth/login/github"
+            href={`${API_URL}/auth/login/github`}
             className="flex items-center justify-center gap-3 w-full px-6 py-3 bg-white text-black rounded-lg font-bold hover:bg-gray-200 transition"
           >
             <Github className="h-5 w-5" />
@@ -140,7 +129,7 @@ export default function Home() {
         {/* Google Login */}
         {authMode === "google" && (
           <Link
-            href="http://localhost:8000/auth/login/google"
+            href={`${API_URL}/auth/login/google`}
             className="flex items-center justify-center gap-3 w-full px-6 py-3 bg-white text-black rounded-lg font-bold hover:bg-gray-200 transition"
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">

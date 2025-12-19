@@ -1,15 +1,21 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
+import os
+from dotenv import load_dotenv
 from app.routes import auth_routes, user_routes, team_routes, match_routes, notification_routes, communication_routes, chat_routes, skill_routes
 
+load_dotenv()
+
 app = FastAPI(title="CollabQuest API", version="1.0")
+
+FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # --- CORS SETTINGS ---
 # This allows your Next.js frontend to talk to this backend
 origins = [
     "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    FRONTEND_URL,
 ]
 
 app.add_middleware(

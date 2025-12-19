@@ -9,3 +9,7 @@ python-dotenv
 bcrypt     # For password hashing
 google-auth-httplib2 # For Google OAuth
 google-generativeai # For AI roadmap features
+certifi     # For SSL certificates
+sentence-transformers
+numpy
+scikit-learn
