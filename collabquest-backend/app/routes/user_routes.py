@@ -33,12 +33,6 @@ class SkillsUpdate(BaseModel):
 class VisibilityUpdate(BaseModel):
     settings: VisibilitySettings
 
-@router.put("/visibility", response_model=User)
-async def update_visibility(data: VisibilityUpdate, current_user: User = Depends(get_current_user)):
-    current_user.visibility_settings = data.settings
-    await current_user.save()
-    return current_user
-
 async def update_trust_score(user: User):
     """Recalculates trust score based on verified connected accounts"""
     breakdown = user.trust_score_breakdown
@@ -92,7 +86,37 @@ async def update_trust_score(user: User):
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
-# --- NEW ENDPOINTS FOR DASHBOARD ---
+# --- FAVORITES ---
+
+@router.post("/favorites/{team_id}")
+async def toggle_favorite(team_id: str, current_user: User = Depends(get_current_user)):
+    if not team_id: raise HTTPException(400, "Invalid Team ID")
+    
+    if team_id in current_user.favorites:
+        current_user.favorites.remove(team_id)
+        status = "removed"
+    else:
+        current_user.favorites.append(team_id)
+        status = "added"
+        
+    await current_user.save()
+    return {"status": status, "favorites": current_user.favorites}
+
+@router.get("/me/favorites_details", response_model=List[Team])
+async def get_my_favorites(current_user: User = Depends(get_current_user)):
+    """Fetches full team details for favorited projects"""
+    if not current_user.favorites:
+        return []
+    
+    # Filter out invalid IDs just in case
+    valid_ids = [ObjectId(tid) for tid in current_user.favorites if ObjectId.is_valid(tid)]
+    if not valid_ids:
+        return []
+        
+    teams = await Team.find({"_id": {"$in": valid_ids}}).to_list()
+    return teams
+
+# --- DASHBOARD ENDPOINTS ---
 
 @router.get("/me/tasks")
 async def get_my_tasks(current_user: User = Depends(get_current_user)):
@@ -108,14 +132,11 @@ async def get_my_tasks(current_user: User = Depends(get_current_user)):
                 t_dict["project_id"] = str(team.id)
                 t_dict["project_name"] = team.name
                 
-                # Active = pending, rework, or review (if we want to show waiting status)
-                # History = completed
                 if task.status == "completed":
                     history_tasks.append(t_dict)
                 else:
                     active_tasks.append(t_dict)
                     
-    # Sort: Active by deadline (soonest first), History by completion/deadline (newest first)
     active_tasks.sort(key=lambda x: x['deadline'])
     history_tasks.sort(key=lambda x: x['deadline'], reverse=True)
     
@@ -169,14 +190,12 @@ async def connect_platform(platform: str, req: ConnectRequest, current_user: Use
     stats_data = {}
 
     if platform == "linkedin":
-        # Basic URL validation as we can't easily fetch private LinkedIn data
         if "linkedin.com/in/" not in req.handle_or_url:
             raise HTTPException(400, "Invalid LinkedIn Profile URL")
         current_user.connected_accounts.linkedin = req.handle_or_url
         stats_data = {"url": req.handle_or_url, "verified": True}
         
     elif platform == "codeforces":
-        # Verify handle exists
         stats = await fetch_codeforces_stats(req.handle_or_url)
         if not stats:
             raise HTTPException(404, "Codeforces handle not found")
@@ -189,7 +208,6 @@ async def connect_platform(platform: str, req: ConnectRequest, current_user: Use
         }
         
     elif platform == "leetcode":
-        # Verify user exists
         stats = await fetch_leetcode_stats(req.handle_or_url)
         if not stats:
             raise HTTPException(404, "LeetCode user not found")
@@ -210,7 +228,6 @@ async def connect_platform(platform: str, req: ConnectRequest, current_user: Use
     else:
         raise HTTPException(400, "Invalid platform")
 
-    # SAVE STATS
     if not current_user.platform_stats:
         current_user.platform_stats = {}
     current_user.platform_stats[platform] = stats_data

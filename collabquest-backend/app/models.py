@@ -122,7 +122,7 @@ class User(Document):
     
     # Academic Qualifications
     education: List[Education] = [] 
-    school: Optional[str] = None # Deprecated
+    school: Optional[str] = None 
     
     social_links: List[Link] = []
     professional_links: List[Link] = []
@@ -130,12 +130,13 @@ class User(Document):
     
     # Platform Data
     connected_accounts: ConnectedAccounts = Field(default_factory=ConnectedAccounts)
-    platform_stats: Dict[str, dict] = Field(default_factory=dict) # Stores verified stats
-    visibility_settings: VisibilitySettings = Field(default_factory=VisibilitySettings) # Privacy toggles
+    platform_stats: Dict[str, dict] = Field(default_factory=dict)
+    visibility_settings: VisibilitySettings = Field(default_factory=VisibilitySettings)
 
     ratings_received: List[Rating] = []
 
-    accepted_chat_requests: List[str] = [] 
+    accepted_chat_requests: List[str] = []
+    favorites: List[str] = [] 
     embedding: List[float] = [] 
     
     class Settings: name = "users"

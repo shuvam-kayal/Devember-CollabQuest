@@ -8,7 +8,7 @@ import {
     ShieldCheck, Loader2, Edit2, X, Plus,
     MessageSquare, UserCheck, Bell, CheckCircle,
     Briefcase, UserPlus, Send, Code2, Mail, Clock, Search, XCircle, RotateCcw, Check, Trash2,
-    Calendar, ArrowRight, Layout, Award
+    Calendar, ArrowRight, Layout, Award, Star
 } from "lucide-react";
 import Link from "next/link";
 import GlobalHeader from "@/components/GlobalHeader";
@@ -68,6 +68,7 @@ export default function Dashboard() {
     const [activeTasks, setActiveTasks] = useState<TaskItem[]>([]);
     const [historyTasks, setHistoryTasks] = useState<TaskItem[]>([]);
     const [completedProjects, setCompletedProjects] = useState<Team[]>([]);
+    const [favorites, setFavorites] = useState<Team[]>([]); // <--- NEW
     const [tasksLoading, setTasksLoading] = useState(true);
 
     const [processingId, setProcessingId] = useState<string | null>(null);
@@ -88,7 +89,7 @@ export default function Dashboard() {
             fetchDashboardData(activeToken);
         }
 
-        // Sync with Header Actions (if action taken in Header)
+        // Sync with Header Actions
         const handleSync = () => {
             if (activeToken) {
                 fetchMatches(activeToken);
@@ -122,6 +123,11 @@ export default function Dashboard() {
             const projRes = await api.get("/users/me/projects");
             const completed = projRes.data.filter((t: Team) => t.status === "completed");
             setCompletedProjects(completed);
+
+            // Fetch Favorites
+            const favRes = await api.get("/users/me/favorites_details");
+            setFavorites(favRes.data);
+
         } catch (e) { console.error(e); } finally { setTasksLoading(false); }
     };
 
@@ -281,6 +287,7 @@ export default function Dashboard() {
                      )}
                 </div>
 
+                {/* MY APPLICATIONS */}
                 <div className="w-full mb-12">
                     <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-300"><Briefcase className="w-5 h-5" /> My Applications</h3>
                     {projectOpportunities.length === 0 ? <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-8 text-center text-gray-500"><p>No active applications.</p><Link href="/matches?type=projects" className="text-purple-400 hover:underline text-sm">Find Projects</Link></div> : (
@@ -291,7 +298,6 @@ export default function Dashboard() {
                                     <div className="flex gap-2">
                                         {renderMatchButton(m)}
                                         <button onClick={() => openEmailComposer(m)} className="bg-gray-800 p-1.5 rounded hover:text-green-400" title="Email"><Mail className="w-4 h-4" /></button>
-                                        {/* NEW CHAT BUTTON */}
                                         <Link href={`/chat?targetId=${m.id}`}>
                                             <button className="bg-gray-800 p-1.5 rounded hover:text-blue-400" title="Chat"><MessageSquare className="w-4 h-4" /></button>
                                         </Link>
@@ -302,20 +308,42 @@ export default function Dashboard() {
                         </div>
                     )}
                 </div>
+
+                 {/* FAVORITED PROJECTS SECTION (NEW) */}
+                 {favorites.length > 0 && (
+                    <div className="w-full mb-12">
+                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-yellow-500">
+                            <Star className="w-5 h-5 fill-yellow-500" /> Favorited Projects
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {favorites.map(team => (
+                                <Link href={`/teams/${team._id || team.id}`} key={team._id || team.id}>
+                                    <div className="bg-gray-900 border border-yellow-500/20 p-5 rounded-xl hover:scale-[1.02] transition cursor-pointer hover:border-yellow-500/50">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h4 className="font-bold text-white truncate w-3/4">{team.name}</h4>
+                                            <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
+                                        </div>
+                                        <p className="text-xs text-gray-500 line-clamp-2">{team.description}</p>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    </div>
+                )}
                 
                 {/* COMPLETED PROJECTS SECTION */}
                 {completedProjects.length > 0 && (
                     <div className="w-full mb-12">
-                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-yellow-500">
+                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-blue-400">
                             <Award className="w-5 h-5" /> Completed Projects
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             {completedProjects.map(team => (
                                 <Link href={`/teams/${team._id || team.id}`} key={team._id || team.id}>
-                                    <div className="bg-gradient-to-br from-gray-900 to-black border border-yellow-500/30 p-5 rounded-xl hover:scale-[1.02] transition cursor-pointer">
+                                    <div className="bg-gradient-to-br from-gray-900 to-black border border-blue-500/30 p-5 rounded-xl hover:scale-[1.02] transition cursor-pointer">
                                         <div className="flex justify-between items-start mb-2">
                                             <h4 className="font-bold text-white truncate">{team.name}</h4>
-                                            <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded font-black uppercase">DONE</span>
+                                            <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-black uppercase">DONE</span>
                                         </div>
                                         <p className="text-xs text-gray-500 line-clamp-2">{team.description}</p>
                                     </div>
@@ -331,7 +359,7 @@ export default function Dashboard() {
                         <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-400">
                             <Layout className="w-5 h-5" /> Task History
                         </h3>
-                        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden max-h-60 overflow-y-auto custom-scrollbar">
                             {historyTasks.map((task, i) => (
                                 <div key={i} className="flex items-center justify-between p-4 border-b border-gray-800 last:border-0 hover:bg-gray-800/50 transition">
                                     <div className="flex flex-col">
