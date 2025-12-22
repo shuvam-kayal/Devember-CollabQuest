@@ -7,7 +7,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
     ShieldCheck, Loader2, Edit2, X, Plus,
     MessageSquare, UserCheck, Bell, CheckCircle,
-    Briefcase, UserPlus, Send, Code2, Mail, Clock, Search, XCircle, RotateCcw, Check, Trash2
+    Briefcase, UserPlus, Send, Code2, Mail, Clock, Search, XCircle, RotateCcw, Check, Trash2,
+    Calendar, ArrowRight, Layout, Award
 } from "lucide-react";
 import Link from "next/link";
 import GlobalHeader from "@/components/GlobalHeader";
@@ -39,9 +40,20 @@ interface Match {
 
 interface Team {
     _id: string;
+    id?: string;
     name: string;
     description: string;
     members: string[];
+    status?: string;
+}
+
+interface TaskItem {
+    id: string;
+    description: string;
+    deadline: string;
+    status: string;
+    project_id: string;
+    project_name: string;
 }
 
 export default function Dashboard() {
@@ -51,6 +63,12 @@ export default function Dashboard() {
 
     const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
     const [myProjects, setMyProjects] = useState<Team[]>([]);
+    
+    // New Feature State
+    const [activeTasks, setActiveTasks] = useState<TaskItem[]>([]);
+    const [historyTasks, setHistoryTasks] = useState<TaskItem[]>([]);
+    const [completedProjects, setCompletedProjects] = useState<Team[]>([]);
+    const [tasksLoading, setTasksLoading] = useState(true);
 
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [showEmailModal, setShowEmailModal] = useState(false);
@@ -67,6 +85,7 @@ export default function Dashboard() {
             fetchUserProfile(activeToken);
             fetchMatches(activeToken);
             fetchMyProjects(activeToken);
+            fetchDashboardData(activeToken);
         }
 
         // Sync with Header Actions (if action taken in Header)
@@ -74,6 +93,7 @@ export default function Dashboard() {
             if (activeToken) {
                 fetchMatches(activeToken);
                 fetchMyProjects(activeToken);
+                fetchDashboardData(activeToken);
             }
         };
         window.addEventListener("dashboardUpdate", handleSync);
@@ -89,6 +109,21 @@ export default function Dashboard() {
     const fetchMyProjects = async (jwt: string) => {
         try { const res = await api.get("/teams/"); const uid = (await api.get("/users/me")).data._id; setMyProjects(res.data.filter((t: any) => t.members[0] === uid)); } catch (e) { }
     }
+    
+    // New Fetcher for Dashboard Data
+    const fetchDashboardData = async (jwt: string) => {
+        try {
+            // Fetch Tasks
+            const taskRes = await api.get("/users/me/tasks");
+            setActiveTasks(taskRes.data.active);
+            setHistoryTasks(taskRes.data.history);
+            
+            // Fetch All Projects (Member/Leader) for Completed section
+            const projRes = await api.get("/users/me/projects");
+            const completed = projRes.data.filter((t: Team) => t.status === "completed");
+            setCompletedProjects(completed);
+        } catch (e) { console.error(e); } finally { setTasksLoading(false); }
+    };
 
     // --- ACTIONS ---
 
@@ -145,6 +180,18 @@ export default function Dashboard() {
         } catch (err) { alert("Action failed"); fetchMatches(token!); }
         finally { setProcessingId(null); }
     }
+    
+    // New Task Submission Action
+    const handleTaskSubmit = async (task: TaskItem) => {
+        if(!confirm("Mark this task as done and submit for review?")) return;
+        const token = Cookies.get("token");
+        try {
+            // Optimistic update
+            setActiveTasks(prev => prev.filter(t => t.id !== task.id));
+            await api.post(`/teams/${task.project_id}/tasks/${task.id}/submit`);
+            fetchDashboardData(token!);
+        } catch(e) { alert("Failed to submit task"); }
+    };
 
     const openEmailComposer = (match: Match) => { setEmailRecipient({ id: match.id, name: match.name }); setShowEmailModal(true); }
     const handleSendEmail = async () => { const token = Cookies.get("token"); if (!emailRecipient) return; try { await api.post("/communication/send-email", { recipient_id: emailRecipient.id, subject: emailSubject, body: emailBody }); alert("Email sent!"); setShowEmailModal(false); setEmailSubject(""); setEmailBody(""); } catch (err) { alert("Failed"); } }
@@ -193,8 +240,48 @@ export default function Dashboard() {
                         <Link href="/find-team"><button className="w-full px-6 py-2 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg flex items-center gap-2"><Plus className="w-4 h-4" /> Create Project</button></Link>
                     </motion.div>
                 </div>
+                
+                {/* ACTIVE TASKS SECTION */}
+                <div className="w-full mb-12">
+                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-green-400">
+                        <CheckCircle className="w-5 h-5" /> Active Tasks
+                    </h3>
+                    {tasksLoading ? <div className="text-gray-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Loading tasks...</div> : 
+                     activeTasks.length === 0 ? (
+                        <div className="bg-gray-900/30 border border-gray-800 border-dashed rounded-xl p-6 text-center text-gray-500 text-sm">
+                            No active tasks pending.
+                        </div>
+                     ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {activeTasks.map(task => (
+                                <div key={task.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col justify-between hover:border-gray-700 transition">
+                                    <div className="mb-4">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded border border-blue-900/50 hover:bg-blue-900/50 transition">
+                                                {task.project_name}
+                                            </Link>
+                                            <span className="text-[10px] text-gray-500 uppercase tracking-widest">{task.status}</span>
+                                        </div>
+                                        <h4 className="font-bold text-white text-sm line-clamp-2">{task.description}</h4>
+                                    </div>
+                                    <div className="flex items-center justify-between mt-auto">
+                                        <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                                            <Calendar className="w-3.5 h-3.5" />
+                                            {new Date(task.deadline).toLocaleDateString()}
+                                        </div>
+                                        {task.status !== 'review' && (
+                                            <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5">
+                                                <Check className="w-3 h-3" /> Mark Done
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                     )}
+                </div>
 
-                <div className="w-full">
+                <div className="w-full mb-12">
                     <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-300"><Briefcase className="w-5 h-5" /> My Applications</h3>
                     {projectOpportunities.length === 0 ? <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-8 text-center text-gray-500"><p>No active applications.</p><Link href="/matches?type=projects" className="text-purple-400 hover:underline text-sm">Find Projects</Link></div> : (
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -215,6 +302,55 @@ export default function Dashboard() {
                         </div>
                     )}
                 </div>
+                
+                {/* COMPLETED PROJECTS SECTION */}
+                {completedProjects.length > 0 && (
+                    <div className="w-full mb-12">
+                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-yellow-500">
+                            <Award className="w-5 h-5" /> Completed Projects
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            {completedProjects.map(team => (
+                                <Link href={`/teams/${team._id || team.id}`} key={team._id || team.id}>
+                                    <div className="bg-gradient-to-br from-gray-900 to-black border border-yellow-500/30 p-5 rounded-xl hover:scale-[1.02] transition cursor-pointer">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <h4 className="font-bold text-white truncate">{team.name}</h4>
+                                            <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded font-black uppercase">DONE</span>
+                                        </div>
+                                        <p className="text-xs text-gray-500 line-clamp-2">{team.description}</p>
+                                    </div>
+                                </Link>
+                            ))}
+                        </div>
+                    </div>
+                )}
+                
+                {/* TASK HISTORY SECTION */}
+                {historyTasks.length > 0 && (
+                    <div className="w-full">
+                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-400">
+                            <Layout className="w-5 h-5" /> Task History
+                        </h3>
+                        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+                            {historyTasks.map((task, i) => (
+                                <div key={i} className="flex items-center justify-between p-4 border-b border-gray-800 last:border-0 hover:bg-gray-800/50 transition">
+                                    <div className="flex flex-col">
+                                        <span className="text-sm font-medium text-gray-300 line-through decoration-gray-600">{task.description}</span>
+                                        <div className="flex items-center gap-2 mt-1">
+                                            <span className="text-[10px] text-blue-400">{task.project_name}</span>
+                                            <span className="text-[10px] text-gray-600">•</span>
+                                            <span className="text-[10px] text-gray-500">Completed</span>
+                                        </div>
+                                    </div>
+                                    <div className="text-green-500">
+                                        <CheckCircle className="w-4 h-4" />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
             </div>
             <AnimatePresence>
                 {showEmailModal && emailRecipient && (

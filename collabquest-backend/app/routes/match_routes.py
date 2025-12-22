@@ -41,16 +41,50 @@ async def create_match(user_id: str, project_id: str, leader_id: str):
     return True
 
 @router.get("/projects")
-async def match_projects_for_user(current_user: User = Depends(get_current_user)):
+async def match_projects_for_user(
+    current_user: User = Depends(get_current_user),
+    search: Optional[str] = None,
+    skills: Optional[List[str]] = Query(None),
+    min_members: Optional[int] = None,
+    max_members: Optional[int] = None,
+    recruiting_only: bool = True
+):
     # 1. Fetch all teams
     all_teams = await Team.find_all().to_list()
     
-    # 2. Filter: exclude joined teams AND teams NOT looking for members
-    candidates = [
-        t for t in all_teams 
-        if str(current_user.id) not in t.members 
-        and t.is_looking_for_members is True # <--- VISIBILITY CHECK
-    ]
+    # 2. Filter Logic
+    candidates = []
+    
+    search_lower = search.lower() if search else None
+    
+    for t in all_teams:
+        # Exclude joined teams
+        if str(current_user.id) in t.members:
+            continue
+            
+        # Filter: Recruiting Status
+        if recruiting_only and not t.is_looking_for_members:
+            continue
+            
+        # Filter: Search Name
+        if search_lower and search_lower not in t.name.lower():
+            continue
+            
+        # Filter: Member Count
+        if min_members is not None and len(t.members) < min_members:
+            continue
+        if max_members is not None and len(t.members) > max_members:
+            continue
+            
+        # Filter: Tech Stack (Skills)
+        # If any of the requested skills matches the team's needed or active skills
+        if skills:
+            team_skills = set(s.lower() for s in (t.needed_skills + t.active_needed_skills))
+            req_skills = set(s.lower() for s in skills)
+            if not team_skills.intersection(req_skills):
+                continue
+
+        candidates.append(t)
     
     scored_projects = []
     for team in candidates:

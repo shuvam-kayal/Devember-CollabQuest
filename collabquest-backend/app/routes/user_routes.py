@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
-from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, VisibilitySettings
+from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, Team, VisibilitySettings
 from app.auth.dependencies import get_current_user
 from app.services.vector_store import generate_embedding
 from app.auth.utils import fetch_codeforces_stats, fetch_leetcode_stats
 from bson import ObjectId
+from datetime import datetime
 
 router = APIRouter()
 
@@ -90,6 +91,43 @@ async def update_trust_score(user: User):
 @router.get("/me", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
+
+# --- NEW ENDPOINTS FOR DASHBOARD ---
+
+@router.get("/me/tasks")
+async def get_my_tasks(current_user: User = Depends(get_current_user)):
+    """Fetches all tasks assigned to the current user across all projects."""
+    teams = await Team.find(Team.members == str(current_user.id)).to_list()
+    active_tasks = []
+    history_tasks = []
+    
+    for team in teams:
+        for task in team.tasks:
+            if task.assignee_id == str(current_user.id):
+                t_dict = task.dict()
+                t_dict["project_id"] = str(team.id)
+                t_dict["project_name"] = team.name
+                
+                # Active = pending, rework, or review (if we want to show waiting status)
+                # History = completed
+                if task.status == "completed":
+                    history_tasks.append(t_dict)
+                else:
+                    active_tasks.append(t_dict)
+                    
+    # Sort: Active by deadline (soonest first), History by completion/deadline (newest first)
+    active_tasks.sort(key=lambda x: x['deadline'])
+    history_tasks.sort(key=lambda x: x['deadline'], reverse=True)
+    
+    return {"active": active_tasks, "history": history_tasks}
+
+@router.get("/me/projects")
+async def get_my_projects(current_user: User = Depends(get_current_user)):
+    """Fetches all projects the user is a member of."""
+    teams = await Team.find(Team.members == str(current_user.id)).to_list()
+    return teams
+
+# -----------------------------------
 
 @router.put("/profile", response_model=User)
 async def update_profile(data: ProfileUpdate, current_user: User = Depends(get_current_user)):
