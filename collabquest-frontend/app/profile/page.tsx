@@ -144,7 +144,13 @@ export default function ProfilePage() {
 
     if (loading) return <div className="h-screen bg-gray-950 flex items-center justify-center"><Loader2 className="animate-spin text-purple-500" /></div>;
 
-    const totalTrust = trustBreakdown ? (trustBreakdown.base + trustBreakdown.github + trustBreakdown.linkedin + trustBreakdown.codeforces + trustBreakdown.leetcode) : 5.0;
+    const totalTrust = trustBreakdown ? (
+        (Number(trustBreakdown.base) || 0) + 
+        (Number(trustBreakdown.github) || 0) + 
+        (Number(trustBreakdown.linkedin) || 0) + 
+        (Number(trustBreakdown.codeforces) || 0) + 
+        (Number(trustBreakdown.leetcode) || 0)
+    ) : 5.0;
 
     return (
         <div className="min-h-screen bg-[#050505] text-white pb-20">
@@ -211,26 +217,26 @@ export default function ProfilePage() {
                                 <div className="space-y-3">
                                     <div className="flex justify-between items-center bg-black p-3 rounded-xl border border-white/10">
                                         <span className="text-gray-400 text-sm font-bold">Base Score</span>
-                                        <span className="text-green-400 font-bold">5.0</span>
+                                        <span className="text-green-400 font-bold">{trustBreakdown.base?.toFixed(1) || "5.0"}</span>
                                     </div>
                                     
                                     {/* Github Section */}
-                                    {(trustBreakdown.github > 0) && (
-                                        <div className="bg-black p-3 rounded-xl border border-white/10">
-                                            <div className="flex justify-between items-center mb-2">
-                                                <span className="text-gray-300 text-sm font-bold flex items-center gap-2"><Github className="w-3 h-3"/> GitHub</span>
-                                                <span className="text-green-400 text-xs font-mono">+{trustBreakdown.github.toFixed(1)}</span>
-                                            </div>
+                                    <div className="bg-black p-3 rounded-xl border border-white/10">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-gray-300 text-sm font-bold flex items-center gap-2"><Github className="w-3 h-3"/> GitHub</span>
+                                            <span className="text-green-400 text-xs font-mono">+{Number(trustBreakdown.github || 0).toFixed(1)}</span>
+                                        </div>
+                                        {trustBreakdown.details && trustBreakdown.details.some((d: string) => d.includes("GitHub")) && (
                                             <div className="space-y-1 pl-5 border-l border-white/10">
                                                 {trustBreakdown.details.filter((d:string) => d.includes("GitHub")).map((d:string, i:number) => (
                                                     <p key={i} className="text-[10px] text-gray-500">{d.replace("GitHub: ", "")}</p>
                                                 ))}
                                             </div>
-                                        </div>
-                                    )}
+                                        )}
+                                    </div>
 
                                     {/* Other Platforms */}
-                                    {trustBreakdown.details.filter((d:string) => !d.includes("GitHub")).map((detail: string, i: number) => {
+                                    {trustBreakdown.details?.filter((d:string) => !d.includes("GitHub")).map((detail: string, i: number) => {
                                         const parts = detail.split(":");
                                         const platform = parts[0];
                                         const info = parts[1] || "";

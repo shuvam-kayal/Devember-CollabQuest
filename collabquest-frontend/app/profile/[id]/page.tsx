@@ -51,8 +51,9 @@ export default function PublicProfile() {
                         {/* TRUST SCORE BADGE */}
                         <div className="bg-black/50 border border-green-500/30 p-4 rounded-2xl text-center min-w-[120px]">
                             <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                            <div className="text-3xl font-black text-white">{Math.min(7.0, user.trust_score).toFixed(1)}</div>
-                            <div className="text-[10px] text-gray-500 uppercase tracking-widest">Trust Score</div>
+                            {/* Display score out of 10 */}
+                            <div className="text-3xl font-black text-white">{Math.min(10.0, user.trust_score).toFixed(1)}</div>
+                            <div className="text-[10px] text-gray-500 uppercase tracking-widest">/ 10 Trust</div>
                         </div>
                     </div>
                 </div>
@@ -78,7 +79,7 @@ export default function PublicProfile() {
                                         </div>
                                     </div>
                                 )}
-                                {/* Other Platforms (if connected) */}
+                                {/* Other Platforms (if connected and visible) */}
                                 {user.connected_accounts?.linkedin && isVisible('linkedin') && (
                                     <div className="flex items-center gap-2 text-sm text-gray-400">
                                         <Linkedin className="w-4 h-4 text-blue-400" /> LinkedIn Verified
