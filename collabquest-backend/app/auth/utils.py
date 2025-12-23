@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from jose import jwt
 from dotenv import load_dotenv
 from jose.exceptions import JWTError
+from app.models import TrustBreakdown
 
 load_dotenv()
 
@@ -15,6 +16,7 @@ GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
 SECRET_KEY = os.getenv("SECRET_KEY")
 ALGORITHM = "HS256"
 
+# --- HEADERS TO MIMIC A BROWSER ---
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Accept": "application/json, text/html, application/xhtml+xml, application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -36,11 +38,38 @@ async def get_github_token(code: str):
         return response.json().get("access_token")
 
 async def get_github_user(token: str):
-    """Fetch user profile using the access token"""
+    """Fetch user profile and email using the access token"""
     async with httpx.AsyncClient() as client:
         headers = {"Authorization": f"Bearer {token}"}
+        
+        # 1. Fetch Basic Profile
         response = await client.get("https://api.github.com/user", headers=headers)
-        return response.json()
+        if response.status_code != 200:
+            return None
+        
+        profile = response.json()
+        
+        # 2. If email is missing (private), fetch from /user/emails
+        if not profile.get("email"):
+            try:
+                emails_resp = await client.get("https://api.github.com/user/emails", headers=headers)
+                if emails_resp.status_code == 200:
+                    emails = emails_resp.json()
+                    # Find primary + verified email
+                    for e in emails:
+                        if e.get("primary") and e.get("verified"):
+                            profile["email"] = e["email"]
+                            break
+                    # Fallback: if no primary found, take the first verified one
+                    if not profile.get("email"):
+                        for e in emails:
+                            if e.get("verified"):
+                                profile["email"] = e["email"]
+                                break
+            except Exception as e:
+                print(f"Error fetching GitHub emails: {e}")
+        
+        return profile
 
 async def update_trust_score(user):
     """
@@ -50,7 +79,6 @@ async def update_trust_score(user):
     breakdown = user.trust_score_breakdown
     if not breakdown:
         # Initialize if it doesn't exist
-        from models import TrustBreakdown
         breakdown = TrustBreakdown()
 
     # 1. Reset dynamic fields (Keep breakdown.base which is usually 5.0)

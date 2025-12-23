@@ -30,8 +30,9 @@ class AuthResponse(BaseModel):
 @router.get("/login/github")
 async def github_login():
     """Redirects the user to GitHub to sign in"""
+    # ADDED user:email scope here
     return RedirectResponse(
-        f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope=read:user"
+        f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope=read:user user:email"
     )
 
 @router.get("/callback")
@@ -42,6 +43,9 @@ async def github_callback(code: str):
     
     # Always fetch fresh data from GitHub API
     github_user = await get_github_user(token)
+    if not github_user:
+        raise HTTPException(status_code=400, detail="Failed to fetch GitHub profile")
+
     github_id_str = str(github_user["id"])
     
     # Check if user exists in DB
@@ -53,6 +57,7 @@ async def github_callback(code: str):
         user = User(
             github_id=github_id_str,
             username=github_user["login"],
+            # Fallback is now less likely to happen
             email=github_user.get("email") or "no-email@github.com",
             avatar_url=github_user["avatar_url"],
             connected_accounts={"github": github_user["login"]}, # Ensure this exists

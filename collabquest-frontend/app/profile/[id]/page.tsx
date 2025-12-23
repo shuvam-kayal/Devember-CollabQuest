@@ -3,13 +3,24 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import api from "@/lib/api";
 import GlobalHeader from "@/components/GlobalHeader";
-import { ArrowLeft, Code2, Heart, User as UserIcon, GraduationCap, Link as LinkIcon, Award, Star, Loader2, ShieldCheck, Github, Linkedin, Code, Mail } from "lucide-react";
+import { 
+    ArrowLeft, Code2, Heart, User as UserIcon, GraduationCap, 
+    Link as LinkIcon, Award, Star, Loader2, ShieldCheck, 
+    Github, Linkedin, Code, Mail, MessageSquare, Send, X 
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
 
 export default function PublicProfile() {
     const params = useParams();
     const router = useRouter();
     const [user, setUser] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+
+    // Email Modal State
+    const [showEmailModal, setShowEmailModal] = useState(false);
+    const [emailSubject, setEmailSubject] = useState("");
+    const [emailBody, setEmailBody] = useState("");
+    const [sendingEmail, setSendingEmail] = useState(false);
 
     useEffect(() => {
         api.get(`/users/${params.id}`)
@@ -23,6 +34,30 @@ export default function PublicProfile() {
         return user.visibility_settings[key];
     };
 
+    const handleStartChat = () => {
+        router.push(`/chat?targetId=${user.id || user._id}`);
+    };
+
+    const handleSendEmail = async () => {
+        if (!emailSubject.trim() || !emailBody.trim()) return alert("Please fill in all fields.");
+        setSendingEmail(true);
+        try {
+            await api.post("/communication/send-email", {
+                recipient_id: user.id || user._id,
+                subject: emailSubject,
+                body: emailBody
+            });
+            alert("Email sent successfully!");
+            setShowEmailModal(false);
+            setEmailSubject("");
+            setEmailBody("");
+        } catch (e) {
+            alert("Failed to send email. Please try again.");
+        } finally {
+            setSendingEmail(false);
+        }
+    };
+
     if (loading) return <div className="h-screen bg-black text-white flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
     if (!user) return null;
 
@@ -30,7 +65,7 @@ export default function PublicProfile() {
     const githubDetails = user.trust_score_breakdown?.details?.filter((d: string) => d.includes("GitHub")) || [];
 
     return (
-        <div className="min-h-screen bg-gray-950 text-white">
+        <div className="min-h-screen bg-gray-950 text-white relative">
             <GlobalHeader />
             <div className="max-w-5xl mx-auto p-8">
                 <button onClick={() => router.back()} className="mb-6 flex items-center gap-2 text-gray-400 hover:text-white transition">
@@ -56,7 +91,24 @@ export default function PublicProfile() {
                                 {user.age && <span className="bg-gray-800 px-3 py-1 rounded-full text-gray-300">Age: {user.age}</span>}
                                 {user.school && <span className="flex items-center gap-2 bg-gray-800 px-3 py-1 rounded-full text-gray-300"><GraduationCap className="w-4 h-4"/> {user.school}</span>}
                             </div>
+
+                            {/* --- ACTION BUTTONS --- */}
+                            <div className="flex justify-center md:justify-start gap-3 mt-6">
+                                <button 
+                                    onClick={handleStartChat}
+                                    className="bg-purple-600 hover:bg-purple-500 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition shadow-lg shadow-purple-500/20"
+                                >
+                                    <MessageSquare className="w-4 h-4" /> Send Message
+                                </button>
+                                <button 
+                                    onClick={() => setShowEmailModal(true)}
+                                    className="bg-gray-800 hover:bg-gray-700 text-white px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition border border-gray-700"
+                                >
+                                    <Mail className="w-4 h-4" /> Send Email
+                                </button>
+                            </div>
                         </div>
+
                         {/* TRUST SCORE BADGE */}
                         <div className="bg-black/50 border border-green-500/30 p-4 rounded-2xl text-center min-w-[120px]">
                             <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
@@ -178,6 +230,64 @@ export default function PublicProfile() {
                     </div>
                 </div>
             </div>
+
+            {/* EMAIL COMPOSITION MODAL */}
+            <AnimatePresence>
+                {showEmailModal && (
+                    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+                        <motion.div 
+                            initial={{ scale: 0.9, opacity: 0 }} 
+                            animate={{ scale: 1, opacity: 1 }} 
+                            exit={{ scale: 0.9, opacity: 0 }}
+                            className="bg-gray-900 border border-gray-800 p-6 rounded-2xl w-full max-w-lg shadow-2xl relative"
+                        >
+                            <button 
+                                onClick={() => setShowEmailModal(false)} 
+                                className="absolute top-4 right-4 text-gray-500 hover:text-white"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                            
+                            <h2 className="text-xl font-bold mb-1 flex items-center gap-2">
+                                <Mail className="w-5 h-5 text-gray-400" /> Send Email
+                            </h2>
+                            <p className="text-xs text-gray-500 mb-6">
+                                Your email address will remain hidden. The recipient can reply via your profile.
+                            </p>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Subject</label>
+                                    <input 
+                                        className="w-full bg-black border border-gray-800 rounded-lg p-3 text-sm outline-none focus:border-purple-500 transition"
+                                        placeholder="Regarding your project..."
+                                        value={emailSubject}
+                                        onChange={(e) => setEmailSubject(e.target.value)}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="text-xs font-bold text-gray-500 uppercase block mb-1">Message</label>
+                                    <textarea 
+                                        className="w-full bg-black border border-gray-800 rounded-lg p-3 text-sm h-40 outline-none focus:border-purple-500 transition resize-none"
+                                        placeholder="Hi, I'd like to collaborate..."
+                                        value={emailBody}
+                                        onChange={(e) => setEmailBody(e.target.value)}
+                                    />
+                                </div>
+                                
+                                <button 
+                                    onClick={handleSendEmail} 
+                                    disabled={sendingEmail}
+                                    className="w-full bg-white text-black font-bold py-3 rounded-xl hover:bg-gray-200 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                                >
+                                    {sendingEmail ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                    {sendingEmail ? "Sending..." : "Send Securely"}
+                                </button>
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

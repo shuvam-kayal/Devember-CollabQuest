@@ -47,24 +47,32 @@ async def send_email(
     
     email_subject = f"[CollabQuest] {email_data.subject}"
     
-    # HTML Body for better formatting
+    # Preserve newlines by replacing \n with <br>
+    formatted_body = email_data.body.replace("\n", "<br>")
+    
+    # Link to the sender's profile (Assuming frontend runs on localhost:3000)
+    profile_url = f"http://localhost:3000/profile/{current_user.id}"
+
+    # HTML Body
     html_body = f"""
     <h3>You have a new message from {sender_name} via CollabQuest!</h3>
     <p><strong>Subject:</strong> {email_data.subject}</p>
     <hr>
-    <p>{email_data.body}</p>
+    <p>{formatted_body}</p>
     <hr>
-    <p>To reply, you can email them directly at: <a href="mailto:{sender_email}">{sender_email}</a></p>
+    <p>To reply, please visit their profile directly:</p>
+    <p><a href="{profile_url}" style="background-color: #7c3aed; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">View Profile & Reply</a></p>
+    <p style="font-size: 12px; color: gray; margin-top: 20px;">For privacy, the email address has not been revealed.</p>
     """
 
     message = MessageSchema(
         subject=email_subject,
-        recipients=[recipient_email],  # List of recipients
+        recipients=[recipient_email], 
         body=html_body,
         subtype=MessageType.html
     )
 
-    # 3. Send Email (Using BackgroundTasks to keep response fast)
+    # 3. Send Email
     fm = FastMail(conf)
     background_tasks.add_task(fm.send_message, message)
     
