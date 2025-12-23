@@ -13,3 +13,4 @@ certifi     # For SSL certificates
 sentence-transformers
 numpy
 scikit-learn
+fastapi-mail
