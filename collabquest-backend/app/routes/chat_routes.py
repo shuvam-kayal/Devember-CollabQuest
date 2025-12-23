@@ -421,6 +421,7 @@ async def get_contacts(current_user: User = Depends(get_current_user)):
         if user: contacts.append({"id": str(user.id), "username": user.username, "avatar_url": user.avatar_url or "https://github.com/shadcn.png"})
     return contacts
 
+# --- UPDATED WEBSOCKET FOR SIGNALING ---
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.connect(websocket, user_id)
@@ -430,11 +431,32 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         while True:
             data = await websocket.receive_json()
             recipient_id = data.get("recipient_id")
-            content = data.get("content")
-            # Parse attachments (default to empty list)
-            attachments_data = data.get("attachments", [])
+            event_type = data.get("event") # 'message' OR 'offer' / 'answer' / 'ice-candidate' / 'hang-up'
             
-            # Map dicts to Attachment objects
+            # --- SIGNALING HANDLING (Calls) ---
+            if event_type in ["offer", "answer", "ice-candidate", "hang-up"]:
+                signal_payload = {
+                    "event": event_type,
+                    "sender_id": user_id,
+                    "recipient_id": recipient_id,
+                    "data": data.get("data") # SDP or Candidate
+                }
+                
+                # Check if recipient is a group
+                group = await ChatGroup.get(recipient_id)
+                if group:
+                    # Broadcast signal to all group members except sender
+                    for member_id in group.members:
+                        if member_id != user_id:
+                            await manager.send_personal_message(signal_payload, member_id)
+                else:
+                    # Direct P2P Signal
+                    await manager.send_personal_message(signal_payload, recipient_id)
+                continue
+
+            # --- EXISTING CHAT MESSAGE HANDLING ---
+            content = data.get("content")
+            attachments_data = data.get("attachments", [])
             attachments_objs = [
                 Attachment(url=a["url"], file_type=a["file_type"], name=a["name"]) 
                 for a in attachments_data
@@ -445,7 +467,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                     sender_id=user_id, 
                     recipient_id=recipient_id, 
                     content=content or "", 
-                    attachments=attachments_objs, # <--- Store attachments
+                    attachments=attachments_objs,
                     is_read=False
                 )
                 await msg.insert()
@@ -457,7 +479,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 
                 group = await ChatGroup.get(recipient_id)
                 if group:
-                    # Group Message: Send to all members
                     for member_id in group.members:
                         if member_id != user_id:
                             uc = await UnreadCount.find_one(UnreadCount.user_id == member_id, UnreadCount.target_id == recipient_id)
@@ -471,7 +492,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                             
                             await manager.send_personal_message({"event": "message", "message": payload}, member_id)
                 else: 
-                    # Direct Message: Send to recipient
                     await manager.send_personal_message({"event": "message", "message": payload}, recipient_id)
     except WebSocketDisconnect: manager.disconnect(websocket, user_id)
     except Exception: manager.disconnect(websocket, user_id)
