@@ -9,7 +9,7 @@ import {
     Save, ArrowLeft, Clock, Calendar, Code2, Star, Heart, User, Plus, X, 
     Trash2, Zap, CheckCircle, AlertTriangle, Briefcase, Eye, EyeOff, Check,
     GraduationCap, Award, Linkedin, Code, ExternalLink, ShieldCheck, Loader2,
-    Globe, Twitter, Github, Instagram
+    Globe, Twitter, Github, Instagram, Mail
 } from "lucide-react";
 import Link from "next/link";
 
@@ -28,6 +28,7 @@ export default function ProfilePage() {
     const [loading, setLoading] = useState(true);
 
     // Profile State
+    const [email, setEmail] = useState("");
     const [about, setAbout] = useState("");
     const [skills, setSkills] = useState<{ name: string, level: string }[]>([]);
     const [interests, setInterests] = useState<string[]>([]);
@@ -49,7 +50,8 @@ export default function ProfilePage() {
     const [trustBreakdown, setTrustBreakdown] = useState<any>(null);
     const [visibility, setVisibility] = useState<any>({
         linkedin: true, codeforces: true, leetcode: true, 
-        education: true, achievements: true, ratings: true
+        education: true, achievements: true, ratings: true,
+        email: false 
     });
 
     // Inputs
@@ -73,6 +75,7 @@ export default function ProfilePage() {
         if (!token) return router.push("/");
         api.get("/users/me").then(res => {
             const u = res.data;
+            setEmail(u.email || "");
             setAbout(u.about || "");
             setSkills(u.skills || []);
             setInterests(u.interests || []);
@@ -106,7 +109,6 @@ export default function ProfilePage() {
                 professional_links: profLinks, achievements
             });
             alert("Profile Saved!");
-            // Reload window to fetch updated score
             window.location.reload(); 
         } catch (err) { alert("Save failed"); }
     };
@@ -199,6 +201,29 @@ export default function ProfilePage() {
                                         {AGES.map(a => <option key={a} value={a}>{a}</option>)}
                                     </select>
                                 </div>
+                                
+                                {/* EMAIL SECTION */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Email Address</label>
+                                        <button 
+                                            onClick={() => toggleVisibility('email')} 
+                                            className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.email ? "text-green-400" : "text-gray-600 hover:text-gray-400"}`}
+                                        >
+                                            {visibility.email ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                                            {visibility.email ? "Visible to Public" : "Hidden"}
+                                        </button>
+                                    </div>
+                                    <div className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-gray-400 flex items-center gap-3 cursor-not-allowed">
+                                        <Mail className="w-4 h-4 opacity-50" />
+                                        <span className="flex-1 font-mono">{email}</span>
+                                    </div>
+                                    <p className="text-[10px] text-gray-600 mt-1.5 flex items-center gap-1">
+                                        <ShieldCheck className="w-3 h-3" />
+                                        Email cannot be changed manually.
+                                    </p>
+                                </div>
+
                                 <div>
                                     <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Mini Bio</label>
                                     <textarea className="w-full bg-black border border-white/10 rounded-xl p-3 h-32 text-sm focus:border-purple-500 transition-all outline-none resize-none" value={about} onChange={e => setAbout(e.target.value)} placeholder="Tell the community about yourself..." />

@@ -64,6 +64,7 @@ class VisibilitySettings(BaseModel):
     education: bool = True
     achievements: bool = True
     ratings: bool = True
+    email: bool = False
 
 # --- VOTING & REQUEST MODELS ---
 class DeletionRequest(BaseModel):

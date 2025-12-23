@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import api from "@/lib/api";
 import GlobalHeader from "@/components/GlobalHeader";
-import { ArrowLeft, Code2, Heart, User as UserIcon, GraduationCap, Link as LinkIcon, Award, Star, Loader2, ShieldCheck, Github, Linkedin, Code } from "lucide-react";
+import { ArrowLeft, Code2, Heart, User as UserIcon, GraduationCap, Link as LinkIcon, Award, Star, Loader2, ShieldCheck, Github, Linkedin, Code, Mail } from "lucide-react";
 
 export default function PublicProfile() {
     const params = useParams();
@@ -42,6 +42,15 @@ export default function PublicProfile() {
                         <img src={user.avatar_url || "https://github.com/shadcn.png"} className="w-32 h-32 rounded-full border-4 border-gray-800" />
                         <div className="text-center md:text-left flex-1">
                             <h1 className="text-4xl font-bold">{user.username}</h1>
+                            
+                            {/* --- EMAIL DISPLAY (CONDITIONAL) --- */}
+                            {isVisible('email') && user.email && (
+                                <a href={`mailto:${user.email}`} className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition mt-2 text-sm bg-white/5 px-3 py-1 rounded-full border border-white/5 hover:border-white/20">
+                                    <Mail className="w-3.5 h-3.5" />
+                                    {user.email}
+                                </a>
+                            )}
+                            
                             <p className="text-gray-400 mt-2 max-w-xl">{user.about}</p>
                             <div className="flex flex-wrap justify-center md:justify-start gap-4 mt-4 text-sm">
                                 {user.age && <span className="bg-gray-800 px-3 py-1 rounded-full text-gray-300">Age: {user.age}</span>}
