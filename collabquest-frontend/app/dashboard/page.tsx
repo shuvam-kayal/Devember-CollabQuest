@@ -1,17 +1,17 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Cookies from "js-cookie";
-import api from "@/lib/api";
+import api from "@/lib/api"; // Using your custom api utility
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    ShieldCheck, Loader2, Edit2, X, Plus,
-    MessageSquare, UserCheck, Bell, CheckCircle,
-    Briefcase, UserPlus, Send, Code2, Mail, Clock, Search, XCircle, RotateCcw, Check, Trash2
+    Sparkles, ChevronLeft, ChevronRight, ShieldCheck, Loader2, Edit2, X, Plus,
+    MessageSquare, Bell, Briefcase, Users, Star, Clock, LayoutDashboard, 
+    Settings, Send, CheckCircle, XCircle, RotateCcw, Code2, Mail, Trash2, User
 } from "lucide-react";
 import Link from "next/link";
-import GlobalHeader from "@/components/GlobalHeader";
 
+/* -------------------- INTERFACES -------------------- */
 interface UserProfile {
     username: string;
     avatar_url: string;
@@ -44,184 +44,340 @@ interface Team {
     members: string[];
 }
 
+/* -------------------- SIDEBAR LINK -------------------- */
+const SidebarLink = ({ icon: Icon, label, active, onClick, isCollapsed }: any) => (
+    <div
+        onClick={onClick}
+        className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all
+      ${active ? "bg-purple-600/10 text-purple-400" : "text-gray-400 hover:bg-white/5 hover:text-white"}`}
+    >
+        <Icon className="w-5 h-5 min-w-[20px]" />
+        {!isCollapsed && <span className="text-sm font-medium whitespace-nowrap">{label}</span>}
+    </div>
+);
+
 export default function Dashboard() {
     const searchParams = useSearchParams();
     const router = useRouter();
-    const [user, setUser] = useState<UserProfile | null>(null);
+    const pathname = usePathname();
 
-    const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
-    const [myProjects, setMyProjects] = useState<Team[]>([]);
-
+    // UI States
+    const [isCollapsed, setIsCollapsed] = useState(false);
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [showEmailModal, setShowEmailModal] = useState(false);
+    
+    // Data States
+    const [user, setUser] = useState<UserProfile | null>(null);
+    const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
+    const [myProjects, setMyProjects] = useState<Team[]>([]);
+    
+    // Form States
     const [emailRecipient, setEmailRecipient] = useState<{ id: string, name: string } | null>(null);
     const [emailSubject, setEmailSubject] = useState("");
     const [emailBody, setEmailBody] = useState("");
 
+    /* -------------------- INITIALIZATION & SYNC -------------------- */
     useEffect(() => {
         const urlToken = searchParams.get("token");
         let activeToken = urlToken;
-        if (urlToken) { Cookies.set("token", urlToken, { expires: 7 }); router.replace("/dashboard"); }
-        else { activeToken = Cookies.get("token") || null; if (!activeToken) { router.push("/"); return; } }
-        if (activeToken) {
-            fetchUserProfile(activeToken);
-            fetchMatches(activeToken);
-            fetchMyProjects(activeToken);
+        
+        if (urlToken) { 
+            Cookies.set("token", urlToken, { expires: 7 }); 
+            router.replace("/dashboard"); 
+        } else { 
+            activeToken = Cookies.get("token") || null; 
+            if (!activeToken) { router.push("/"); return; } 
         }
 
-        // Sync with Header Actions (if action taken in Header)
-        const handleSync = () => {
-            if (activeToken) {
-                fetchMatches(activeToken);
-                fetchMyProjects(activeToken);
-            }
-        };
+        if (activeToken) {
+            fetchInitialData();
+        }
+
+        const handleSync = () => fetchInitialData();
         window.addEventListener("dashboardUpdate", handleSync);
         return () => window.removeEventListener("dashboardUpdate", handleSync);
-    }, [searchParams, router]);
+    }, [searchParams]);
 
-    const fetchUserProfile = async (jwt: string) => {
-        try { const response = await api.get("/users/me"); setUser(response.data); } catch (error) { Cookies.remove("token"); router.push("/"); }
+    const fetchInitialData = async () => {
+        try {
+            const userRes = await api.get("/users/me");
+            setUser(userRes.data);
+            
+            const matchRes = await api.get("/matches/mine");
+            setProjectOpportunities(matchRes.data.filter((m: any) => m.role === "Team Leader").reverse());
+            
+            const teamRes = await api.get("/teams/");
+            const uid = userRes.data._id || userRes.data.id;
+            setMyProjects(teamRes.data.filter((t: any) => t.members.includes(uid)));
+        } catch (error) {
+            console.error("Session expired");
+            Cookies.remove("token");
+            router.push("/");
+        }
     };
-    const fetchMatches = async (jwt: string) => {
-        try { const res = await api.get("/matches/mine"); setProjectOpportunities(res.data.filter((m: any) => m.role === "Team Leader").reverse()); } catch (e) { }
-    }
-    const fetchMyProjects = async (jwt: string) => {
-        try { const res = await api.get("/teams/"); const uid = (await api.get("/users/me")).data._id; setMyProjects(res.data.filter((t: any) => t.members[0] === uid)); } catch (e) { }
-    }
 
-    // --- ACTIONS ---
-
+    /* -------------------- HANDLERS -------------------- */
     const handleReapply = async (match: Match) => {
-        const token = Cookies.get("token");
         setProcessingId(match.id + match.project_id);
         try {
-            const updateStatus = (prev: Match[]) => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "matched" as const } : m);
-            setProjectOpportunities(updateStatus);
             await api.post(`/teams/${match.project_id}/reset`, { target_user_id: match.id });
-            alert("Status reset! You can now apply/invite again.");
-            fetchMatches(token!);
+            fetchInitialData();
         } catch (err) { alert("Action failed"); }
         finally { setProcessingId(null); }
     }
 
     const handleDeleteMatch = async (match: Match) => {
-        if (!confirm("Remove this project? This will 'unlike' it and remove it from your list.")) return;
-        const token = Cookies.get("token");
+        if (!confirm("Remove this project?")) return;
         const myId = user?._id || user?.id || "";
         try {
             setProjectOpportunities(prev => prev.filter(p => p.project_id !== match.project_id));
             await api.delete(`/matches/delete/${match.project_id}/${myId}`);
-        } catch (e) { alert("Failed"); fetchMatches(token!); }
+        } catch (e) { alert("Failed"); fetchInitialData(); }
     }
 
     const handleReject = async (match: Match) => {
-        if (!confirm("Are you sure you want to reject this request?")) return;
-        const token = Cookies.get("token");
-        const myId = user?._id || user?.id || "";
+        if (!confirm("Reject this request?")) return;
         try {
-            setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "rejected" as const, rejected_by: myId } : m));
             await api.post(`/teams/${match.project_id}/reject`, { target_user_id: match.id });
             window.dispatchEvent(new Event("triggerNotificationRefresh"));
+            fetchInitialData();
         } catch (err) { alert("Action failed"); }
     }
 
-    const requestJoin = async (match: Match) => { const token = Cookies.get("token"); setProcessingId(match.id + match.project_id); try { setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "requested" as const } : m)); await api.post(`/teams/${match.project_id}/invite`, { target_user_id: "LEADER" }); setTimeout(() => fetchMatches(token!), 500); } catch (err: any) { alert("Failed"); fetchMatches(token!); } finally { setProcessingId(null); } }
+    const requestJoin = async (match: Match) => { 
+        setProcessingId(match.id + match.project_id); 
+        try { 
+            await api.post(`/teams/${match.project_id}/invite`, { target_user_id: "LEADER" }); 
+            setTimeout(() => fetchInitialData(), 500); 
+        } catch (err: any) { alert("Failed"); fetchInitialData(); } 
+        finally { setProcessingId(null); } 
+    }
 
-    const handleConnectionAction = async (match: Match) => {
-        const token = Cookies.get("token");
+    const handleJoinAction = async (match: Match) => {
         setProcessingId(match.id + match.project_id);
         try {
-            let target = "";
-            if (match.role === "Team Leader") target = await getCurrentUserId(token!);
-
-            setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "joined" as const } : m));
+            const target = user?._id || user?.id;
             await api.post(`/teams/${match.project_id}/members`, { target_user_id: target });
-
             window.dispatchEvent(new Event("triggerNotificationRefresh"));
-
-            alert("Success!");
-            setTimeout(() => { fetchMatches(token!); fetchMyProjects(token!); }, 500);
-        } catch (err) { alert("Action failed"); fetchMatches(token!); }
+            alert("Joined Successfully!");
+            setTimeout(() => fetchInitialData(), 500);
+        } catch (err) { alert("Action failed"); fetchInitialData(); }
         finally { setProcessingId(null); }
     }
 
-    const openEmailComposer = (match: Match) => { setEmailRecipient({ id: match.id, name: match.name }); setShowEmailModal(true); }
-    const handleSendEmail = async () => { const token = Cookies.get("token"); if (!emailRecipient) return; try { await api.post("/communication/send-email", { recipient_id: emailRecipient.id, subject: emailSubject, body: emailBody }); alert("Email sent!"); setShowEmailModal(false); setEmailSubject(""); setEmailBody(""); } catch (err) { alert("Failed"); } }
-    const getCurrentUserId = async (token: string) => { const res = await api.get("/users/me"); return res.data._id || res.data.id; }
+    const openEmailComposer = (match: Match) => { 
+        setEmailRecipient({ id: match.id, name: match.name }); 
+        setShowEmailModal(true); 
+    }
 
+    const handleSendEmail = async () => { 
+        if (!emailRecipient) return; 
+        try { 
+            await api.post("/communication/send-email", { recipient_id: emailRecipient.id, subject: emailSubject, body: emailBody }); 
+            alert("Email sent!"); 
+            setShowEmailModal(false); 
+            setEmailSubject(""); 
+            setEmailBody(""); 
+        } catch (err) { alert("Failed"); } 
+    }
+
+    /* -------------------- RENDER LOGIC -------------------- */
     const renderMatchButton = (match: Match) => {
         const isProcessing = processingId === (match.id + match.project_id);
+        
         if (match.status === "rejected") {
             const myId = user?._id || user?.id;
             const isMe = match.rejected_by === myId;
-            const text = isMe ? "Rejected by You" : "Rejected by Team";
             return (
                 <div className="flex-1 flex gap-1">
-                    <div className="flex-1 bg-red-900/20 text-red-400 border border-red-900/50 py-1.5 rounded text-xs font-bold text-center flex items-center justify-center gap-1"><XCircle className="w-3 h-3" /> {text}</div>
-                    <button onClick={() => handleReapply(match)} disabled={isProcessing} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-white" title="Re-apply / Reset Status">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}</button>
+                    <div className="flex-1 bg-red-900/10 text-red-400 border border-red-900/30 py-1.5 rounded-lg text-[10px] font-bold text-center flex items-center justify-center gap-1 uppercase">
+                        <XCircle className="w-3 h-3" /> {isMe ? "Rejected" : "Declined"}
+                    </div>
+                    <button onClick={() => handleReapply(match)} disabled={isProcessing} className="bg-white/5 hover:bg-white/10 px-3 rounded-lg text-gray-400">
+                        {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                    </button>
                 </div>
             );
         }
 
-        if (match.status === "matched") return <button onClick={() => requestJoin(match)} disabled={isProcessing} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Send className="w-3 h-3" /> Request Join</>}</button>;
-        if (match.status === "requested") return <div className="flex-1 bg-gray-700 text-gray-400 py-1.5 rounded text-xs flex items-center justify-center gap-1"><Clock className="w-3 h-3" /> Pending</div>;
-        if (match.status === "invited") return <div className="flex gap-1 flex-1"><button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Join Team</>}</button><button onClick={() => handleReject(match)} className="bg-red-600 hover:bg-red-500 text-white px-2 rounded"><XCircle className="w-3 h-3" /></button></div>;
-        if (match.status === "joined") return <div className="flex-1 bg-gray-800 text-green-400 border border-green-900 py-1.5 rounded text-xs font-bold text-center">Joined</div>;
+        if (match.status === "matched") return <button onClick={() => requestJoin(match)} disabled={isProcessing} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded-lg text-[10px] font-bold uppercase flex items-center justify-center gap-2">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Send className="w-3 h-3" /> Request Join</>}</button>;
+        if (match.status === "requested") return <div className="flex-1 bg-white/5 text-gray-500 py-1.5 rounded-lg text-[10px] font-bold uppercase flex items-center justify-center gap-2"><Clock className="w-3 h-3" /> Pending</div>;
+        if (match.status === "invited") return (
+            <div className="flex gap-1 flex-1">
+                <button onClick={() => handleJoinAction(match)} disabled={isProcessing} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded-lg text-[10px] font-bold uppercase flex items-center justify-center gap-2">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Accept</>}</button>
+                <button onClick={() => handleReject(match)} className="bg-red-600/20 text-red-500 hover:bg-red-600 hover:text-white px-3 rounded-lg"><XCircle className="w-3 h-3" /></button>
+            </div>
+        );
+        if (match.status === "joined") return <div className="flex-1 bg-green-500/10 text-green-500 border border-green-500/20 py-1.5 rounded-lg text-[10px] font-bold uppercase text-center">Active Member</div>;
 
-        return <div className="flex-1 text-gray-500 text-xs text-center py-1 bg-gray-900/50 rounded">Status: {match.status}</div>;
+        return <div className="flex-1 text-gray-500 text-[10px] text-center py-1.5 bg-white/5 rounded-lg uppercase">{match.status}</div>;
     };
 
-    if (!user) return <div className="flex h-screen items-center justify-center bg-gray-950 text-white"><Loader2 className="animate-spin" /></div>;
+    if (!user) return <div className="flex h-screen items-center justify-center bg-black"><Loader2 className="animate-spin text-purple-500" /></div>;
 
     return (
-        <div className="min-h-screen bg-gray-950 text-white relative">
-            <GlobalHeader />
+        <div className="flex min-h-screen bg-[#0A0A0A] text-white">
+            {/* -------------------- SIDEBAR -------------------- */}
+            <aside className={`${isCollapsed ? "w-20" : "w-64"} transition-all duration-300 fixed h-screen border-r border-white/5 bg-[#0F0F0F] flex flex-col z-50`}>
+                    <div className="p-6 flex items-center justify-between">
+                      {!isCollapsed && <h1 className="text-xl font-black tracking-tighter bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">COLLABQUEST</h1>}
+                      <button onClick={() => setIsCollapsed(!isCollapsed)} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 transition-colors">
+                        {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+                      </button>
+                    </div>
+            
+                    <nav className="flex-1 px-4 space-y-2 overflow-hidden">
+                      <SidebarLink icon={LayoutDashboard} label="Dashboard" isCollapsed={isCollapsed} active={pathname === "/dashboard"} onClick={() => router.push("/dashboard")} />
+                      <SidebarLink icon={Users} label="Projects" isCollapsed={isCollapsed} active={pathname === "/find-team"} onClick={() => router.push("/find-team")} />
+                      <SidebarLink icon={Briefcase} label="Mission" isCollapsed={isCollapsed} active={pathname.includes("projects")} onClick={() => router.push("/dashboard/projects")} />
+                      
+                      {!isCollapsed && <p className="text-[10px] text-gray-500 uppercase px-2 pt-4 mb-2 font-bold tracking-widest">Personal</p>}
+                      <SidebarLink icon={Star} label="Saved" isCollapsed={isCollapsed} active={pathname.includes("saved")} onClick={() => router.push("/dashboard/saved")} />
+                      <SidebarLink icon={Clock} label="History" isCollapsed={isCollapsed} active={pathname.includes("history")} onClick={() => router.push("/dashboard/history")} />
+                    </nav>
 
-            <div className="max-w-6xl mx-auto p-8 pt-12">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-                    <Link href="/profile">
-                        <motion.div whileHover={{ scale: 1.02 }} className="p-6 rounded-2xl bg-gray-900 border border-gray-800 shadow-xl flex items-center gap-4 cursor-pointer group hover:border-purple-500/50 transition-all relative">
-                            <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 className="w-4 h-4 text-purple-400" /></div>
-                            <img src={user.avatar_url} alt="Avatar" className="w-16 h-16 rounded-full border-2 border-purple-500" />
-                            <div><h2 className="text-xl font-semibold">Welcome, {user.username}!</h2><div className="flex flex-wrap gap-2 mt-2">{user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => <span key={i} className="text-xs bg-gray-800 px-2 py-1 rounded text-gray-300 border border-gray-700">{s.name}</span>) : <span className="text-xs text-yellow-500 italic">Tap to add skills +</span>}</div></div>
-                        </motion.div>
-                    </Link>
-                    <motion.div whileHover={{ scale: 1.02 }} className="p-6 rounded-2xl bg-gradient-to-br from-purple-900/50 to-blue-900/50 border border-purple-500/20 flex flex-col justify-center items-start">
-                        <h2 className="text-xl font-semibold mb-2">Build Your Dream Team</h2>
-                        <p className="text-sm text-gray-400 mb-4">Post an idea and find hackers instantly.</p>
-                        <Link href="/find-team"><button className="w-full px-6 py-2 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg flex items-center gap-2"><Plus className="w-4 h-4" /> Create Project</button></Link>
-                    </motion.div>
+                <div onClick={() => router.push("/profile")} className="p-4 border-t border-white/5 bg-black/20 cursor-pointer hover:bg-white/5 transition-all">
+                    <div className="flex items-center gap-3">
+                        <img src={user.avatar_url} className="w-9 h-9 rounded-lg border border-purple-500/50 object-cover shrink-0" />
+                        {!isCollapsed && (
+                            <div className="flex-1 overflow-hidden">
+                                <p className="text-sm font-bold truncate">{user.username}</p>
+                                <p className="text-[10px] text-green-400 font-mono">TRUST {user.trust_score.toFixed(1)}</p>
+                            </div>
+                        )}
+                        {!isCollapsed && <Settings className="w-4 h-4 text-gray-500" />}
+                    </div>
                 </div>
+            </aside>
+            
+            {/* -------------------- MAIN CONTENT -------------------- */}
+            <main className={`flex-1 ${isCollapsed ? "ml-20" : "ml-64"} transition-all duration-300 min-h-screen`}>
+    {/* --- HEADER --- */}
+    <header className="sticky top-0 z-40 bg-black/80 backdrop-blur border-b border-white/5 px-8 py-4 flex justify-between items-center">
+        <div className="text-sm text-gray-400 flex items-center gap-2">
+            <span>Workspace</span> <span className="text-gray-600">/</span> <span className="text-white capitalize">Dashboard</span>
+        </div>
 
-                <div className="w-full">
-                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-300"><Briefcase className="w-5 h-5" /> My Applications</h3>
-                    {projectOpportunities.length === 0 ? <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-8 text-center text-gray-500"><p>No active applications.</p><Link href="/matches?type=projects" className="text-purple-400 hover:underline text-sm">Find Projects</Link></div> : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {projectOpportunities.map((m) => (
-                                <div key={m.id + m.project_id} className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                                    <div className="flex items-center gap-3 mb-3"><div className="w-8 h-8 bg-purple-900/50 rounded-full flex items-center justify-center border border-purple-500/30"><Code2 className="w-4 h-4 text-purple-400" /></div><div><h4 className="font-bold text-sm">{m.project_name}</h4><p className="text-xs text-gray-400">Leader: {m.name}</p></div></div>
-                                    <div className="flex gap-2">
-                                        {renderMatchButton(m)}
-                                        <button onClick={() => openEmailComposer(m)} className="bg-gray-800 p-1.5 rounded hover:text-green-400" title="Email"><Mail className="w-4 h-4" /></button>
-                                        {/* NEW CHAT BUTTON */}
-                                        <Link href={`/chat?targetId=${m.id}`}>
-                                            <button className="bg-gray-800 p-1.5 rounded hover:text-blue-400" title="Chat"><MessageSquare className="w-4 h-4" /></button>
-                                        </Link>
-                                        <button onClick={() => handleDeleteMatch(m)} className="bg-gray-800 p-1.5 rounded hover:text-red-400" title="Remove / Unlike"><Trash2 className="w-4 h-4" /></button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
+        <div className="flex items-center gap-4">
+            <button onClick={() => router.push("/chat")} className="p-2 hover:bg-white/5 rounded-xl transition-all">
+                <MessageSquare className="w-5 h-5 text-gray-400" />
+            </button>
+            <button className="p-2 hover:bg-white/5 rounded-xl transition-all">
+                <Bell className="w-5 h-5 text-gray-400" />
+            </button>
+            <div className="flex items-center gap-2 bg-white/5 px-3 py-1.5 rounded-lg border border-white/10">
+                <ShieldCheck className="w-4 h-4 text-green-500" />
+                <span className="text-xs font-mono font-bold text-green-400">{user.trust_score.toFixed(1)}</span>
             </div>
+            {/* Added Profile Picture to Header */}
+            <Link href="/profile">
+                <img src={user.avatar_url} className="w-8 h-8 rounded-full border border-purple-500/50 hover:scale-110 transition-transform cursor-pointer" alt="Profile" />
+            </Link>
+        </div>
+    </header>
+
+    {/* --- CONTENT --- */}
+    <div className="p-8 max-w-7xl mx-auto space-y-8">
+        {/* Profile and Action Cards Section */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Welcome Profile Card */}
+            <Link href="/profile">
+                <motion.div whileHover={{ scale: 1.01 }} className="p-6 rounded-2xl bg-[#161616] border border-white/5 shadow-xl flex items-center gap-5 cursor-pointer group hover:border-purple-500/50 transition-all relative">
+                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <Edit2 className="w-4 h-4 text-purple-400" />
+                    </div>
+                    <img src={user.avatar_url} alt="Avatar" className="w-20 h-20 rounded-2xl border-2 border-purple-500 object-cover shadow-lg shadow-purple-500/20" />
+                    <div>
+                        <h2 className="text-2xl font-bold tracking-tight">Welcome, {user.username}!</h2>
+                        <div className="flex flex-wrap gap-2 mt-3">
+                            {user.skills && user.skills.length > 0 ? (
+                                user.skills.slice(0, 3).map((s, i) => (
+                                    <span key={i} className="text-[10px] font-bold uppercase tracking-wider bg-purple-500/10 px-2 py-1 rounded border border-purple-500/20 text-purple-400">
+                                        {s.name}
+                                    </span>
+                                ))
+                            ) : (
+                                <span className="text-xs text-yellow-500/70 italic font-medium">Add skills to your arsenal +</span>
+                            )}
+                        </div>
+                    </div>
+                </motion.div>
+            </Link>
+
+            {/* "Build Your Dream Team" Action Card */}
+            <motion.div whileHover={{ scale: 1.01 }} className="p-6 rounded-2xl bg-gradient-to-br from-purple-900/20 to-blue-900/20 border border-white/10 flex flex-col justify-center items-start shadow-xl relative overflow-hidden group">
+                <div className="absolute -right-4 -bottom-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                    <Sparkles size={120} className="text-white" />
+                </div>
+                <h2 className="text-2xl font-bold mb-2 italic">Forge Your Squad</h2>
+                <p className="text-sm text-gray-400 mb-5 font-medium">Post an mission brief and find experts instantly.</p>
+                <Link href="/find-team" className="w-full">
+                    <button className="w-full px-6 py-3 bg-white text-black font-black text-xs uppercase tracking-widest rounded-xl hover:bg-gray-200 transition-all shadow-lg flex items-center justify-center gap-2 active:scale-95">
+                        <Plus className="w-4 h-4" /> Create Project
+                    </button>
+                </Link>
+            </motion.div>
+        </div>
+
+        {/* Existing "My Applications" Section */}
+        <div className="w-full">
+            <h3 className="text-xs font-black text-gray-500 uppercase tracking-[0.2em] mb-6 flex items-center gap-2">
+                <div className="h-[1px] w-8 bg-gray-500/50"></div> <Briefcase className="w-4 h-4" /> Active Missions
+            </h3>
+            
+            {projectOpportunities.length === 0 ? (
+                <div className="bg-[#111] border border-white/5 rounded-3xl p-12 text-center">
+                    <p className="text-gray-500 italic font-medium mb-4">No active applications in the field.</p>
+                    <Link href="/matches?type=projects" className="text-purple-400 font-bold hover:underline text-xs uppercase tracking-widest">Find Missions</Link>
+                </div>
+            ) : (
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {projectOpportunities.map((m) => (
+                        <div key={m.id + m.project_id} className="bg-[#161616] border border-white/5 p-5 rounded-2xl group hover:border-purple-500/30 transition-all flex flex-col sm:flex-row justify-between items-center gap-4">
+                            <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 bg-purple-600/10 rounded-xl flex items-center justify-center border border-purple-500/20">
+                                    <Code2 className="w-6 h-6 text-purple-400" />
+                                </div>
+                                <div>
+                                    <h4 className="font-bold text-base">{m.project_name}</h4>
+                                    <p className="text-xs text-gray-500 font-medium">Lead: <span className="text-gray-300">@{m.name}</span></p>
+                                </div>
+                            </div>
+                            <div className="flex gap-2 w-full sm:w-auto">
+                                {renderMatchButton(m)}
+                                <div className="flex gap-1">
+                                    <button onClick={() => openEmailComposer(m)} className="p-2.5 bg-white/5 rounded-lg hover:text-green-400 transition-colors border border-white/5"><Mail className="w-4 h-4" /></button>
+                                    <Link href={`/chat?targetId=${m.id}`}>
+                                        <button className="p-2.5 bg-white/5 rounded-lg hover:text-blue-400 transition-colors border border-white/5"><MessageSquare className="w-4 h-4" /></button>
+                                    </Link>
+                                    <button onClick={() => handleDeleteMatch(m)} className="p-2.5 bg-white/5 rounded-lg hover:text-red-400 transition-colors border border-white/5"><Trash2 className="w-4 h-4" /></button>
+                                </div>
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    </div>
+</main>
+
+            {/* -------------------- EMAIL MODAL -------------------- */}
             <AnimatePresence>
                 {showEmailModal && emailRecipient && (
-                    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-gray-900 border border-gray-800 p-8 rounded-2xl w-full max-w-md relative">
-                            <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Mail className="w-5 h-5" /> Send Secure Message</h2><button onClick={() => setShowEmailModal(false)}><X className="text-gray-500 hover:text-white" /></button></div>
-                            <div className="space-y-4 mt-4"><div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400">To: <span className="text-white font-bold">{emailRecipient.name}</span> (Email Hidden)</div><input className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 outline-none focus:border-green-500" placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} /><textarea className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 h-32 outline-none focus:border-green-500 resize-none" placeholder="Message" value={emailBody} onChange={e => setEmailBody(e.target.value)} /><button onClick={handleSendEmail} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"><Send className="w-4 h-4" /> Send Message</button></div>
+                    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+                        <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-[#111] border border-white/10 p-8 rounded-3xl w-full max-w-md shadow-2xl">
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-xl font-bold flex items-center gap-2 text-green-400"><Mail className="w-5 h-5" /> Secure Message</h2>
+                                <button onClick={() => setShowEmailModal(false)} className="text-gray-500 hover:text-white"><X /></button>
+                            </div>
+                            <div className="space-y-4">
+                                <div className="bg-white/5 p-3 rounded-xl text-xs text-gray-400">Recipient: <span className="text-white font-bold">@{emailRecipient.name}</span></div>
+                                <input className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm outline-none focus:border-purple-500 transition-all" placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} />
+                                <textarea className="w-full bg-black border border-white/10 rounded-xl p-3 h-40 text-sm outline-none focus:border-purple-500 transition-all resize-none" placeholder="Write your proposal..." value={emailBody} onChange={e => setEmailBody(e.target.value)} />
+                                <button onClick={handleSendEmail} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 transition-all">
+                                    <Send className="w-4 h-4" /> Dispatch Email
+                                </button>
+                            </div>
                         </motion.div>
                     </div>
                 )}
