@@ -3,10 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import init_db
 from app.routes import auth_routes, user_routes, team_routes, match_routes, notification_routes, chatbot_routes
 
+# 1. NEW IMPORT: Bring in the sync function
+from app.services.recommendation_service import sync_data_to_chroma
+
 app = FastAPI(title="CollabQuest API", version="1.0")
 
 # --- CORS SETTINGS ---
-# This allows your Next.js frontend to talk to this backend
 origins = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -23,7 +25,9 @@ app.add_middleware(
 @app.on_event("startup")
 async def start_db():
     await init_db()
-    print("✅ Database Connected")
+    # 2. NEW: Sync the Vector DB immediately on startup
+    await sync_data_to_chroma()
+    print("✅ Database Connected & Vector Search Ready")
 
 # --- REGISTER ROUTES ---
 app.include_router(auth_routes.router, prefix="/auth", tags=["Authentication"])
@@ -32,6 +36,8 @@ app.include_router(team_routes.router, prefix="/teams", tags=["Teams"])
 app.include_router(match_routes.router, prefix="/matches", tags=["Matching"])
 app.include_router(notification_routes.router, prefix="/notifications", tags=["Notifications"])
 app.include_router(chatbot_routes.router, prefix="/chat/ai", tags=["Chatbot"])
+
+# (Removed the old /rag-chat endpoint because /chat/ai handles everything now)
 
 @app.get("/")
 async def root():

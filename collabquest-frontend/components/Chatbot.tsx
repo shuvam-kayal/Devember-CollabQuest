@@ -1,125 +1,227 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 import Cookies from "js-cookie";
+import { usePathname } from "next/navigation"; // 🔥 Added to check current page
+import { Send, Bot, User, X, Loader2, Sparkles, Mic, Volume2, VolumeX } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+
+// --- 1. TYPE DEFINITIONS ---
+declare global {
+  interface Window {
+    webkitSpeechRecognition: any;
+  }
+}
 
 interface Message {
   role: "user" | "bot";
   text: string;
 }
 
-export default function Chatbot() {
+interface ChatbotProps {
+  onClose?: () => void;
+}
+
+export default function Chatbot({ onClose }: ChatbotProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   
-  // Ref for auto-scrolling
+  // Voice States
+  const [isListening, setIsListening] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(true); 
+  const recognitionRef = useRef<any>(null);
+
+  // Prevent repeats
+  const lastSpokenRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Helper to scroll to bottom
+  // 🔥 DETECT PAGE LOCATION
+  const pathname = usePathname();
+  // List pages where the chatbot should appear BUT stay empty/logged out
+  const isPublicPage = ["/login", "/signup", "/", "/auth"].includes(pathname);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
 
-  // Scroll whenever messages change
   useEffect(() => {
     scrollToBottom();
-  }, [messages]);
+  }, [messages, loading]);
 
-  // Load chat history
+  // --- 2. INITIALIZE SPEECH RECOGNITION ---
+  useEffect(() => {
+    if (typeof window !== "undefined" && "webkitSpeechRecognition" in window) {
+      const recognition = new window.webkitSpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = "en-US";
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setInput(transcript);
+      };
+
+      recognition.onend = () => setIsListening(false);
+      recognition.onerror = (event: any) => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  // --- 3. TEXT-TO-SPEECH (TTS) ---
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1];
+
+    if (lastMessage?.role === "bot" && !loading) {
+        if (lastMessage.text !== lastSpokenRef.current) {
+            lastSpokenRef.current = lastMessage.text;
+            if (isSpeaking) {
+                speakText(lastMessage.text);
+            }
+        }
+    }
+  }, [messages, isSpeaking, loading]);
+
+  const speakText = (text: string) => {
+    if (typeof window === "undefined") return;
+    window.speechSynthesis.cancel();
+    const cleanText = text.replace(/[*#_`]/g, "");
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 1; 
+    utterance.pitch = 1;
+    const voices = window.speechSynthesis.getVoices();
+    const preferredVoice = voices.find(v => v.name.includes("Google US English")) || voices[0];
+    if (preferredVoice) utterance.voice = preferredVoice;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+        alert("Voice input is not supported in this browser.");
+        return;
+    }
+    if (isListening) {
+      recognitionRef.current.stop();
+    } else {
+      recognitionRef.current.start();
+      setIsListening(true);
+    }
+  };
+
+  const toggleMute = () => {
+    if (isSpeaking) window.speechSynthesis.cancel();
+    setIsSpeaking(!isSpeaking);
+  };
+
+  // --- 4. HISTORY LOADER (BLOCKED ON LOGIN PAGE) ---
   useEffect(() => {
     const fetchHistory = async () => {
+      // 🔥 FIX: If on login page, DO NOT load history
+      if (isPublicPage) {
+          setMessages([]); // Clear chat if they logged out/went to login
+          return;
+      }
+
       try {
         const token = Cookies.get("token");
-        if (!token) {
-        console.error("AI history: token is null");
-        return;
-        }
+        if (!token) return;
 
         const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/chat/ai/history`,
-        {
-            headers: {
-            Authorization: `Bearer ${token}`,
-            },
-        }
+          `${process.env.NEXT_PUBLIC_API_URL}/chat/ai/history`,
+          { headers: { Authorization: `Bearer ${token}` } }
         );
-        
-        if (!res.ok) throw new Error("Failed to load history");
+
+        if (!res.ok) return; 
 
         const data = await res.json();
-        
-        // Safety check: ensure history exists before mapping
         if (data && data.history) {
           const history = data.history.flatMap((m: any) => [
             { role: "user", text: m.question },
             { role: "bot", text: m.answer },
           ]);
           setMessages(history);
+
+          if (history.length > 0) {
+              lastSpokenRef.current = history[history.length - 1].text;
+          }
         }
       } catch (error) {
         console.error("Error fetching chat history:", error);
       }
     };
-
     fetchHistory();
-  }, []);
+  }, [pathname]); // 🔥 Reloads if page changes
 
-  async function sendMessage() {
-    if (!input.trim()) return;
+  // --- 5. SEND MESSAGE (BLOCKED ON LOGIN PAGE) ---
+  async function sendMessage(overrideText?: string) {
+    const textToSend = overrideText || input;
+    if (!textToSend.trim()) return;
 
-    // Add user message immediately
-    const userMessage = input; 
-    setMessages((prev) => [...prev, { role: "user", text: userMessage }]);
-    setInput(""); // Clear input immediately for better UX
+    window.speechSynthesis.cancel();
+    setMessages((prev) => [...prev, { role: "user", text: textToSend }]);
+    setInput("");
+    
+    // 🔥 FIX: If on login page, pretend to be a bot and ask to login
+    if (isPublicPage) {
+        setTimeout(() => {
+            setMessages((prev) => [
+                ...prev,
+                { role: "bot", text: "I am ready to help! Please **Login** or **Sign Up** to start chatting with me." },
+            ]);
+        }, 600);
+        return;
+    }
+
     setLoading(true);
+    const token = Cookies.get("token");
+
+    if (!token) {
+        setTimeout(() => {
+            setMessages((prev) => [
+                ...prev,
+                { role: "bot", text: "Please login to use the chatbot mentor." },
+            ]);
+            setLoading(false);
+        }, 500);
+        return;
+    }
 
     try {
-        const token = Cookies.get("token");
-        if (!token) {
-        console.error("AI send: token is null");
-        setLoading(false);
-        return;
-        }
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/chat/ai/ask`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`, 
+        },
+        body: JSON.stringify({ question: textToSend }),
+      });
 
-        console.log("AI token being sent:", token);
-
-        const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL}/chat/ai`,
-        {
-            method: "POST",
-            headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ question: userMessage }),
-        }
-        );
-
-
-
-      if (!res.ok) {
-        throw new Error(`Server error: ${res.status}`);
+      if (res.status === 401) {
+         setMessages((prev) => [...prev, { role: "bot", text: "Your session has expired. Please login again." }]);
+         setLoading(false);
+         return;
       }
 
-      const data = await res.json();
+      if (!res.ok) throw new Error(`Server error: ${res.status}`);
 
-      setMessages((prev) => [
-        ...prev,
-        { role: "bot", text: data.answer },
-      ]);
+      const data = await res.json();
+      const botReply = data.answer || "I didn't get a valid response.";
+      
+      setMessages((prev) => [...prev, { role: "bot", text: botReply }]);
+
     } catch (error) {
       console.error("Failed to send message:", error);
-      // Optional: Add an error message to the chat so the user knows
       setMessages((prev) => [
         ...prev,
-        { role: "bot", text: "Sorry, I encountered an error. Please try again." },
+        { role: "bot", text: "Sorry, I encountered an error connecting to the AI." },
       ]);
     } finally {
       setLoading(false);
     }
   }
 
-  // Handle Enter key
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !loading) {
       sendMessage();
@@ -127,64 +229,145 @@ export default function Chatbot() {
   };
 
   return (
-    <div className="flex flex-col h-full p-4 bg-white shadow-lg rounded-lg border border-gray-200">
-      {/* Header */}
-      <div className="border-b pb-2 mb-2">
-        <h2 className="text-lg font-semibold text-gray-800">CollabQuest Mentor</h2>
+    <div className="flex flex-col h-full bg-zinc-950 text-white rounded-xl overflow-hidden border border-zinc-800 shadow-2xl font-sans">
+      
+      {/* HEADER */}
+      <div className="bg-zinc-900/80 backdrop-blur-md border-b border-zinc-800 p-4 flex items-center justify-between sticky top-0 z-10 shrink-0">
+        <div className="flex items-center gap-3">
+            <div className="p-2 bg-indigo-600 rounded-lg shadow-lg shadow-indigo-500/20">
+                <Bot className="w-5 h-5 text-white" />
+            </div>
+            <div>
+                <h2 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
+                    CollabQuest AI
+                    <Sparkles className="w-3 h-3 text-yellow-400 fill-yellow-400 animate-pulse" />
+                </h2>
+                <p className="text-xs text-zinc-400">
+                    {isPublicPage ? "Login Required" : "Voice Enabled"}
+                </p>
+            </div>
+        </div>
+        
+        <div className="flex items-center gap-2">
+            <button 
+                onClick={toggleMute}
+                className={`p-2 rounded-full transition-colors ${isSpeaking ? "text-green-400 hover:bg-zinc-800" : "text-zinc-500 hover:bg-zinc-800"}`}
+                title={isSpeaking ? "Mute Voice" : "Enable Voice"}
+            >
+                {isSpeaking ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+            </button>
+
+            {onClose && (
+            <button 
+                onClick={onClose} 
+                className="p-2 hover:bg-zinc-800 rounded-full transition-colors text-zinc-400 hover:text-white"
+            >
+                <X className="w-4 h-4" />
+            </button>
+            )}
+        </div>
       </div>
 
-      {/* Message Area */}
-      <div className="flex-1 overflow-y-auto space-y-3 mb-3 pr-2 custom-scrollbar">
+      {/* MESSAGES */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-6 custom-scrollbar scroll-smooth">
         {messages.length === 0 && !loading && (
-          <p className="text-gray-400 text-center mt-10">Start a conversation...</p>
-        )}
-        
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`p-3 rounded-lg max-w-[85%] text-sm leading-relaxed ${
-              m.role === "user"
-                ? "bg-blue-600 text-white ml-auto rounded-br-none"
-                : "bg-gray-100 text-gray-800 mr-auto rounded-bl-none border border-gray-200"
-            }`}
-          >
-            {m.text}
+          <div className="flex flex-col items-center justify-center h-full text-center space-y-4 p-8 opacity-60">
+            <div className="w-16 h-16 bg-zinc-900 rounded-2xl flex items-center justify-center mb-2">
+                <Bot className="w-8 h-8 text-indigo-500" />
+            </div>
+            <div>
+                <p className="text-zinc-300 font-medium">
+                    {isPublicPage ? "Please Login to Chat" : "How can I help you today?"}
+                </p>
+                {!isPublicPage && <p className="text-xs text-zinc-500 mt-1">Try tapping the mic to speak!</p>}
+            </div>
           </div>
-        ))}
-        
+        )}
+
+        <AnimatePresence initial={false}>
+            {messages.map((m, i) => (
+            <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+                className={`flex gap-3 ${m.role === "user" ? "flex-row-reverse" : "flex-row"}`}
+            >
+                <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                    m.role === "user" ? "bg-zinc-800" : "bg-indigo-600"
+                }`}>
+                    {m.role === "user" ? <User className="w-4 h-4 text-zinc-400" /> : <Bot className="w-4 h-4 text-white" />}
+                </div>
+
+                <div
+                className={`p-3.5 rounded-2xl text-sm leading-relaxed max-w-[85%] shadow-sm break-words whitespace-pre-wrap ${
+                    m.role === "user"
+                    ? "bg-zinc-800 text-zinc-100 rounded-tr-none"
+                    : "bg-gradient-to-br from-indigo-600 to-violet-600 text-white rounded-tl-none"
+                }`}
+                >
+                {m.text}
+                </div>
+            </motion.div>
+            ))}
+        </AnimatePresence>
+
         {loading && (
-          <div className="flex items-center gap-2 text-sm text-gray-400 ml-2">
-             <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-             <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-75"></div>
-             <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce delay-150"></div>
-          </div>
+           <motion.div 
+             initial={{ opacity: 0, y: 10 }}
+             animate={{ opacity: 1, y: 0 }}
+             className="flex gap-3"
+           >
+              <div className="w-8 h-8 rounded-full bg-indigo-600 flex items-center justify-center flex-shrink-0">
+                  <Bot className="w-4 h-4 text-white" />
+              </div>
+              <div className="bg-zinc-800 p-4 rounded-2xl rounded-tl-none flex items-center gap-1.5 w-fit">
+                 <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 0.8 }} className="w-2 h-2 bg-zinc-400 rounded-full" />
+                 <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.2 }} className="w-2 h-2 bg-zinc-400 rounded-full" />
+                 <motion.div animate={{ scale: [1, 1.2, 1] }} transition={{ repeat: Infinity, duration: 0.8, delay: 0.4 }} className="w-2 h-2 bg-zinc-400 rounded-full" />
+              </div>
+           </motion.div>
         )}
-        
-        {/* Invisible element to scroll to */}
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Input Area */}
-      <div className="flex gap-2 mt-auto">
-        <input
-          className="flex-1 border border-gray-300 rounded-md px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder="Ask a question..."
-          disabled={loading}
-        />
-        <button
-          onClick={sendMessage}
-          disabled={loading || !input.trim()}
-          className={`px-4 py-2 rounded-md font-medium transition-colors ${
-            loading || !input.trim() 
-              ? "bg-gray-300 text-gray-500 cursor-not-allowed" 
-              : "bg-black text-white hover:bg-gray-800"
-          }`}
-        >
-          Send
-        </button>
+      {/* INPUT AREA */}
+      <div className="p-4 bg-zinc-900 border-t border-zinc-800 shrink-0">
+        <div className={`flex gap-2 items-center bg-zinc-950 border rounded-xl p-1.5 transition-all shadow-inner ${isListening ? "border-red-500 ring-1 ring-red-500/50" : "border-zinc-800 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-500/50"}`}>
+          
+          <button
+            onClick={toggleListening}
+            className={`p-2 rounded-lg transition-all duration-200 ${
+                isListening 
+                ? "bg-red-500 text-white animate-pulse" 
+                : "text-zinc-400 hover:text-white hover:bg-zinc-800"
+            }`}
+            title="Voice Input"
+          >
+            <Mic className="w-4 h-4" />
+          </button>
+
+          <input
+            className="flex-1 bg-transparent text-sm text-white placeholder-zinc-500 px-3 py-2 outline-none min-w-0"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={handleKeyDown}
+            placeholder={isPublicPage ? "Please login to chat..." : (isListening ? "Listening..." : "Type or speak...")}
+            disabled={loading} // Keep enabled on public page so they can try (and get the alert)
+            autoComplete="off"
+          />
+          <button
+            onClick={() => sendMessage()}
+            disabled={loading || !input.trim()}
+            className={`p-2 rounded-lg transition-all duration-200 ${
+              loading || !input.trim()
+                ? "text-zinc-600 bg-zinc-900 cursor-not-allowed"
+                : "bg-indigo-600 text-white hover:bg-indigo-500 shadow-lg shadow-indigo-500/25 hover:scale-105 active:scale-95"
+            }`}
+          >
+            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+          </button>
+        </div>
       </div>
     </div>
   );
