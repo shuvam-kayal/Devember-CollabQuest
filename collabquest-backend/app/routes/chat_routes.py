@@ -1,11 +1,14 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, UploadFile, File
 from typing import List, Optional, Dict
 from pydantic import BaseModel
-from app.models import Message, User, ChatGroup, Team, Match, Block, UnreadCount
+from app.models import Message, User, ChatGroup, Team, Match, Block, UnreadCount, Attachment
 from app.auth.dependencies import get_current_user
 from beanie.operators import Or, In, And
 from datetime import datetime
 import traceback
+import shutil
+import os
+import uuid
 
 router = APIRouter()
 
@@ -50,6 +53,41 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # --- ROUTES ---
+
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Uploads a file to the server and returns the URL and metadata.
+    """
+    try:
+        # Generate unique filename
+        file_ext = file.filename.split(".")[-1]
+        unique_name = f"{uuid.uuid4()}.{file_ext}"
+        file_path = f"uploads/{unique_name}"
+        
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # Determine File Type
+        content_type = file.content_type
+        file_type = "document"
+        if content_type.startswith("image/"): file_type = "image"
+        elif content_type.startswith("video/"): file_type = "video"
+        elif content_type.startswith("audio/"): file_type = "audio"
+
+        # Construct URL (Assuming local for now, replace with S3 in prod)
+        # Note: In production, use an ENV variable for the base URL
+        file_url = f"http://localhost:8000/uploads/{unique_name}"
+
+        return {
+            "url": file_url,
+            "file_type": file_type,
+            "name": file.filename
+        }
+    except Exception as e:
+        print(f"Upload Error: {e}")
+        raise HTTPException(500, "File upload failed")
 
 @router.post("/block/{user_id}")
 async def block_user(user_id: str, current_user: User = Depends(get_current_user)):
@@ -393,9 +431,25 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
             data = await websocket.receive_json()
             recipient_id = data.get("recipient_id")
             content = data.get("content")
-            if recipient_id and content:
-                msg = Message(sender_id=user_id, recipient_id=recipient_id, content=content, is_read=False)
+            # Parse attachments (default to empty list)
+            attachments_data = data.get("attachments", [])
+            
+            # Map dicts to Attachment objects
+            attachments_objs = [
+                Attachment(url=a["url"], file_type=a["file_type"], name=a["name"]) 
+                for a in attachments_data
+            ]
+
+            if recipient_id and (content or attachments_objs):
+                msg = Message(
+                    sender_id=user_id, 
+                    recipient_id=recipient_id, 
+                    content=content or "", 
+                    attachments=attachments_objs, # <--- Store attachments
+                    is_read=False
+                )
                 await msg.insert()
+                
                 payload = msg.dict()
                 payload["id"] = str(msg.id)
                 payload["timestamp"] = str(msg.timestamp)

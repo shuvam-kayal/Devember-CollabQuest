@@ -227,10 +227,16 @@ class Notification(Document):
     created_at: datetime = Field(default_factory=datetime.now)
     class Settings: name = "notifications"
 
+class Attachment(BaseModel):
+    url: str
+    file_type: str  # 'image', 'video', 'audio', 'document'
+    name: str
+
 class Message(Document):
     sender_id: str
     recipient_id: str
     content: str
+    attachments: List[Attachment] = []
     is_read: bool = False
     timestamp: datetime = Field(default_factory=datetime.now)
     class Settings: name = "messages"
