@@ -4,7 +4,7 @@ from pydantic import BaseModel
 from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, Team, VisibilitySettings
 from app.auth.dependencies import get_current_user
 from app.services.vector_store import generate_embedding
-from app.auth.utils import fetch_codeforces_stats, fetch_leetcode_stats
+from app.auth.utils import fetch_codeforces_stats, fetch_leetcode_stats, update_trust_score
 from bson import ObjectId
 from datetime import datetime
 
@@ -32,68 +32,6 @@ class SkillsUpdate(BaseModel):
 
 class VisibilityUpdate(BaseModel):
     settings: VisibilitySettings
-
-async def update_trust_score(user: User):
-    """
-    Recalculates trust score.
-    Base (5.0) + Github (Max 1.5) are preserved.
-    Adds Platform Boosts (Max 0.5 total):
-    - LinkedIn: +0.1
-    - Codeforces: +0.2 (Max)
-    - LeetCode: +0.2 (Max)
-    Total Max Score = 7.0
-    """
-    breakdown = user.trust_score_breakdown
-    
-    # Ensure details list exists
-    if breakdown.details is None:
-        breakdown.details = []
-
-    # 1. Reset external scores in details (Keep Base & Github)
-    breakdown.details = [d for d in breakdown.details if not any(p in d for p in ["Codeforces", "LeetCode", "LinkedIn"])]
-    breakdown.codeforces = 0.0
-    breakdown.leetcode = 0.0
-    breakdown.linkedin = 0.0
-    
-    # 2. Codeforces (Max 0.2)
-    if user.connected_accounts.codeforces:
-        stats = user.platform_stats.get("codeforces")
-        if not stats:
-             stats = await fetch_codeforces_stats(user.connected_accounts.codeforces)
-             
-        if stats and "rating" in stats and stats["rating"] != "Unrated":
-            rating = stats["rating"]
-            points = 0.0
-            if rating >= 1000: points = 0.1
-            if rating >= 1400: points = 0.2
-            
-            breakdown.codeforces = points
-            breakdown.details.append(f"Codeforces: Rating {rating} (+{points})")
-            
-    # 3. LeetCode (Max 0.2)
-    if user.connected_accounts.leetcode:
-        stats = user.platform_stats.get("leetcode")
-        if not stats:
-            stats = await fetch_leetcode_stats(user.connected_accounts.leetcode)
-
-        if stats and "total_solved" in stats:
-            total_solved = stats["total_solved"]
-            points = 0.0
-            if total_solved >= 50: points = 0.1
-            if total_solved >= 200: points = 0.2
-            
-            breakdown.leetcode = points
-            breakdown.details.append(f"LeetCode: {total_solved} Solved (+{points})")
-
-    # 4. LinkedIn (Max 0.1)
-    if user.connected_accounts.linkedin:
-        breakdown.linkedin = 0.1
-        breakdown.details.append("LinkedIn: Connected (+0.1)")
-        
-    total = breakdown.base + breakdown.github + breakdown.codeforces + breakdown.leetcode + breakdown.linkedin
-    user.trust_score = round(min(7.0, total), 1)
-    user.trust_score_breakdown = breakdown
-    await user.save()
 
 @router.get("/me", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_user)):

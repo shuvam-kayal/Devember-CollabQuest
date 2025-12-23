@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from app.auth.utils import (
-    get_github_token, get_github_user, calculate_trust_score, 
+    get_github_token, get_github_user, update_trust_score, 
     create_access_token, GITHUB_CLIENT_ID, hash_password, verify_password,
     get_google_token, get_google_user, GOOGLE_CLIENT_ID
 )
@@ -36,37 +36,50 @@ async def github_login():
 
 @router.get("/callback")
 async def github_callback(code: str):
-    """
-    1. GitHub sends back a 'code'
-    2. We exchange it for a Token
-    3. We fetch their Profile
-    4. We calculate Trust Score & Breakdown & Save to DB
-    5. We give them a JWT to log in
-    """
     token = await get_github_token(code)
     if not token:
         raise HTTPException(status_code=400, detail="GitHub Login Failed")
     
+    # Always fetch fresh data from GitHub API
     github_user = await get_github_user(token)
+    github_id_str = str(github_user["id"])
     
     # Check if user exists in DB
-    user = await User.find_one(User.github_id == str(github_user["id"]))
+    user = await User.find_one(User.github_id == github_id_str)
     
     if not user:
-        # NEW USER: Calculate Score & Create
-        score, breakdown_dict = calculate_trust_score(github_user)
-        trust_breakdown = TrustBreakdown(**breakdown_dict)
-        
+        # 1. NEW USER PATH
+        # Create empty breakdown first
         user = User(
-            github_id=str(github_user["id"]),
+            github_id=github_id_str,
             username=github_user["login"],
             email=github_user.get("email") or "no-email@github.com",
             avatar_url=github_user["avatar_url"],
-            trust_score=score,
-            trust_score_breakdown=trust_breakdown,
-            is_verified_student=False # They need to verify email later
+            connected_accounts={"github": github_user["login"]}, # Ensure this exists
+            platform_stats={"github": github_user}
         )
-        await user.insert()
+        # Note: We don't insert yet, we calculate score first
+    else:
+        # 2. RETURNING USER PATH: Sync fresh GitHub data
+        user.username = github_user["login"]
+        user.avatar_url = github_user["avatar_url"]
+        if github_user.get("email"):
+            user.email = github_user["email"]
+        
+        # Update the stats bucket so update_trust_score sees the new repo counts/followers
+        if not user.platform_stats:
+            user.platform_stats = {}
+        user.platform_stats["github"] = github_user
+
+    # 3. UNIFIED CALCULATION (Runs for both New and Returning)
+    # This ensures GitHub, LinkedIn, CF, and LeetCode are all recalculated
+    await update_trust_score(user) 
+    
+    # 4. SAVE TO DB
+    if hasattr(user, 'id') and user.id:
+        await user.save() # Update existing
+    else:
+        await user.insert() # Insert new
     
     # Generate JWT for the Frontend
     jwt_token = create_access_token({"sub": str(user.id)})

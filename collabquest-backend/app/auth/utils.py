@@ -43,57 +43,98 @@ async def get_github_user(token: str):
         response = await client.get("https://api.github.com/user", headers=headers)
         return response.json()
 
-def calculate_trust_score(github_data: dict) -> tuple[float, dict]:
+async def update_trust_score(user):
     """
-    Revised Trust Score Logic:
-    - Base: 5.0
-    - Github Max: 1.5 (Repos, Followers, Age)
-    - Others Max: 0.5 (Handled in user_routes)
-    - Total Max: 7.0
+    Unified Scoring Engine.
+    Calculates all boosts and updates user.trust_score and user.trust_score_breakdown.
     """
-    base_score = 5.0
+    breakdown = user.trust_score_breakdown
+    if not breakdown:
+        # Initialize if it doesn't exist
+        from models import TrustBreakdown
+        breakdown = TrustBreakdown()
+
+    # 1. Reset dynamic fields (Keep breakdown.base which is usually 5.0)
+    breakdown.details = []
+    breakdown.github = 0.0
+    breakdown.linkedin = 0.0
+    breakdown.codeforces = 0.0
+    breakdown.leetcode = 0.0
+
+    # 2. GitHub Boost (Max 1.5)
+    github_stats = user.platform_stats.get("github")
+    if github_stats:
+        public_repos = github_stats.get("public_repos", 0)
+        followers = github_stats.get("followers", 0)
+        created_at_str = github_stats.get("created_at")
+        
+        # Age Logic
+        age_years = 0
+        if created_at_str:
+            try:
+                created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
+                age_years = (datetime.now() - created_at).days / 365
+            except: pass
+
+        repo_pts = min(0.5, public_repos * 0.02)
+        follow_pts = min(0.5, followers * 0.05)
+        age_pts = min(0.5, age_years * 0.2)
+        
+        breakdown.github = round(repo_pts + follow_pts + age_pts, 1)
+        breakdown.details.append(f"GitHub: {public_repos} Repos, {followers} Followers (+{breakdown.github})")
+
+    # 2. Codeforces (Max 0.2)
+    if user.connected_accounts.codeforces:
+        stats = user.platform_stats.get("codeforces")
+        if not stats:
+             stats = await fetch_codeforces_stats(user.connected_accounts.codeforces)
+             
+        if stats and "rating" in stats and stats["rating"] != "Unrated":
+            rating = stats["rating"]
+            points = 0.0
+            if rating >= 1000: points = 0.1
+            if rating >= 1400: points = 0.2
+            
+            breakdown.codeforces = points
+            breakdown.details.append(f"Codeforces: Rating {rating} (+{points})")
+            
+    # 3. LeetCode (Max 0.2)
+    if user.connected_accounts.leetcode:
+        stats = user.platform_stats.get("leetcode")
+        if not stats:
+            stats = await fetch_leetcode_stats(user.connected_accounts.leetcode)
+
+        if stats and "total_solved" in stats:
+            total_solved = stats["total_solved"]
+            points = 0.0
+            if total_solved >= 50: points = 0.1
+            if total_solved >= 200: points = 0.2
+            
+            breakdown.leetcode = points
+            breakdown.details.append(f"LeetCode: {total_solved} Solved (+{points})")
+
+    # Modified Step 4
+    linkedin_connected = user.connected_accounts.get("linkedin")
+    linkedin_in_links = any("linkedin.com" in str(link.url) for link in user.professional_links)
+
+    if linkedin_connected or linkedin_in_links:
+        breakdown.linkedin = 0.1
+        breakdown.details.append("LinkedIn: Verified or Linked (+0.1)")
+
+    # 6. Final Summation
+    total = (
+        breakdown.base + 
+        breakdown.github + 
+        breakdown.linkedin + 
+        breakdown.codeforces + 
+        breakdown.leetcode
+    )
     
-    # Extract stats
-    public_repos = github_data.get("public_repos", 0)
-    followers = github_data.get("followers", 0)
-    created_at_str = github_data.get("created_at")
-    
-    account_age_years = 0
-    if created_at_str:
-        try:
-            created_at = datetime.strptime(created_at_str, "%Y-%m-%dT%H:%M:%SZ")
-            account_age_years = (datetime.now() - created_at).days / 365
-        except:
-            pass
-    
-    # Calculate Github Boost (Max 1.5)
-    # 1. Repos: 0.02 per repo -> Max 0.5 (at 25 repos)
-    repo_points = min(0.5, public_repos * 0.02)
-    
-    # 2. Followers: 0.05 per follower -> Max 0.5 (at 10 followers)
-    follower_points = min(0.5, followers * 0.05)
-    
-    # 3. Account Age: 0.2 per year -> Max 0.5 (at 2.5 years)
-    age_points = min(0.5, account_age_years * 0.2)
-    
-    github_total = round(repo_points + follower_points + age_points, 1)
-    
-    breakdown = {
-        "base": base_score,
-        "github": github_total,
-        "linkedin": 0.0,
-        "codeforces": 0.0,
-        "leetcode": 0.0,
-        "details": [
-            f"GitHub: {public_repos} Repos (+{round(repo_points, 1)})",
-            f"GitHub: {followers} Followers (+{round(follower_points, 1)})",
-            f"GitHub: {round(account_age_years, 1)} Years Old (+{round(age_points, 1)})"
-        ]
-    }
-    
-    # Return Base + Github only (Others added later)
-    total = base_score + github_total
-    return round(min(7.0, total), 1), breakdown
+    user.trust_score = round(total, 1)
+    user.trust_score_breakdown = breakdown
+    # We do NOT call user.save() here to avoid infinite loops; 
+    # the calling function should handle the save.
+    return user
 
 async def fetch_codeforces_stats(handle: str):
     """Fetches user stats from Codeforces API to verify existence and score."""
