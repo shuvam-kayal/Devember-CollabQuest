@@ -41,6 +41,31 @@ class Rating(BaseModel):
     explanation: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.now)
 
+# --- NEW MODELS: TRUST & EDUCATION ---
+class TrustBreakdown(BaseModel):
+    base: float = 5.0
+    github: float = 0.0
+    linkedin: float = 0.0
+    codeforces: float = 0.0
+    leetcode: float = 0.0
+    details: List[str] = []
+
+class Education(BaseModel):
+    institute: str
+    course: str
+    year_of_study: Optional[str] = None 
+    is_completed: bool = False
+    is_visible: bool = True 
+
+class VisibilitySettings(BaseModel):
+    linkedin: bool = True
+    codeforces: bool = True
+    leetcode: bool = True
+    education: bool = True
+    achievements: bool = True
+    ratings: bool = True
+    email: bool = False
+
 # --- VOTING & REQUEST MODELS ---
 class DeletionRequest(BaseModel):
     is_active: bool = False
@@ -79,7 +104,11 @@ class User(Document):
     email: str
     password_hash: Optional[str] = None
     avatar_url: Optional[str] = None
+    
+    # Trust Score
     trust_score: float = Field(default=5.0)
+    trust_score_breakdown: TrustBreakdown = Field(default_factory=TrustBreakdown) 
+    
     rating_count: int = Field(default=1) 
     is_verified_student: bool = False
     auth_method: str = Field(default="github") 
@@ -91,15 +120,24 @@ class User(Document):
     is_looking_for_team: bool = Field(default=True)
     
     age: Optional[str] = None
-    school: Optional[str] = None
+    
+    # Academic Qualifications
+    education: List[Education] = [] 
+    school: Optional[str] = None 
+    
     social_links: List[Link] = []
     professional_links: List[Link] = []
     achievements: List[Achievement] = []
     
+    # Platform Data
     connected_accounts: ConnectedAccounts = Field(default_factory=ConnectedAccounts)
+    platform_stats: Dict[str, dict] = Field(default_factory=dict)
+    visibility_settings: VisibilitySettings = Field(default_factory=VisibilitySettings)
+
     ratings_received: List[Rating] = []
 
-    accepted_chat_requests: List[str] = [] 
+    accepted_chat_requests: List[str] = []
+    favorites: List[str] = [] 
     embedding: List[float] = [] 
     
     class Settings: name = "users"
@@ -189,10 +227,16 @@ class Notification(Document):
     created_at: datetime = Field(default_factory=datetime.now)
     class Settings: name = "notifications"
 
+class Attachment(BaseModel):
+    url: str
+    file_type: str  # 'image', 'video', 'audio', 'document'
+    name: str
+
 class Message(Document):
     sender_id: str
     recipient_id: str
     content: str
+    attachments: List[Attachment] = []
     is_read: bool = False
     timestamp: datetime = Field(default_factory=datetime.now)
     class Settings: name = "messages"

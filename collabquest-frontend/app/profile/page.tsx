@@ -9,7 +9,7 @@ import {
     Save, ArrowLeft, Clock, Calendar, Code2, Star, Heart, User, Plus, X, 
     Trash2, Zap, CheckCircle, AlertTriangle, Briefcase, Eye, EyeOff, Check,
     GraduationCap, Award, Linkedin, Code, ExternalLink, ShieldCheck, Loader2,
-    Globe, Twitter, Github, Instagram
+    Globe, Twitter, Github, Instagram, Mail
 } from "lucide-react";
 import Link from "next/link";
 
@@ -21,12 +21,14 @@ interface TimeRange { start: string; end: string; }
 interface DayAvailability { day: string; enabled: boolean; slots: TimeRange[]; }
 interface SocialLink { platform: string; url: string; }
 interface Achievement { title: string; date?: string; description?: string; }
+interface Education { institute: string; course: string; year_of_study: string; is_completed: boolean; is_visible: boolean; }
 
 export default function ProfilePage() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
 
     // Profile State
+    const [email, setEmail] = useState("");
     const [about, setAbout] = useState("");
     const [skills, setSkills] = useState<{ name: string, level: string }[]>([]);
     const [interests, setInterests] = useState<string[]>([]);
@@ -35,7 +37,7 @@ export default function ProfilePage() {
     );
 
     const [age, setAge] = useState("");
-    const [school, setSchool] = useState("");
+    const [educationList, setEducationList] = useState<Education[]>([]);
     const [socialLinks, setSocialLinks] = useState<SocialLink[]>([]);
     const [profLinks, setProfLinks] = useState<SocialLink[]>([]);
     const [achievements, setAchievements] = useState<Achievement[]>([]);
@@ -43,11 +45,18 @@ export default function ProfilePage() {
     const [ratings, setRatings] = useState<any[]>([]);
     const [isLookingForTeam, setIsLookingForTeam] = useState(true);
 
+    // New Features State
+    const [platformStats, setPlatformStats] = useState<any>({});
+    const [trustBreakdown, setTrustBreakdown] = useState<any>(null);
+    const [visibility, setVisibility] = useState<any>({
+        linkedin: true, codeforces: true, leetcode: true, 
+        education: true, achievements: true, ratings: true,
+        email: false 
+    });
+
     // Inputs
     const [newLinkUrl, setNewLinkUrl] = useState("");
     const [newLinkPlatform, setNewLinkPlatform] = useState("");
-    const [newProfUrl, setNewProfUrl] = useState("");
-    const [newProfPlatform, setNewProfPlatform] = useState("");
     const [achTitle, setAchTitle] = useState("");
     const [achDesc, setAchDesc] = useState("");
     const [dropdownValue, setDropdownValue] = useState("");
@@ -66,13 +75,20 @@ export default function ProfilePage() {
         if (!token) return router.push("/");
         api.get("/users/me").then(res => {
             const u = res.data;
+            setEmail(u.email || "");
             setAbout(u.about || "");
             setSkills(u.skills || []);
             setInterests(u.interests || []);
             setIsLookingForTeam(u.is_looking_for_team ?? true);
             if (u.availability?.length > 0) setAvailability(u.availability);
             setAge(u.age || "");
-            setSchool(u.school || "");
+            
+            // New Fields
+            setEducationList(u.education || []);
+            if (u.visibility_settings) setVisibility(u.visibility_settings);
+            if (u.platform_stats) setPlatformStats(u.platform_stats);
+            if (u.trust_score_breakdown) setTrustBreakdown(u.trust_score_breakdown);
+
             setSocialLinks(u.social_links || []);
             setProfLinks(u.professional_links || []);
             setAchievements(u.achievements || []);
@@ -87,38 +103,58 @@ export default function ProfilePage() {
                 about, interests, availability,
                 skills: skills.map(s => s.name),
                 is_looking_for_team: isLookingForTeam,
-                age, school, social_links: socialLinks,
+                age, 
+                education: educationList,
+                social_links: socialLinks,
                 professional_links: profLinks, achievements
             });
             alert("Profile Saved!");
+            window.location.reload(); 
         } catch (err) { alert("Save failed"); }
+    };
+
+    const toggleVisibility = async (key: string) => {
+        const newSettings = { ...visibility, [key]: !visibility[key] };
+        setVisibility(newSettings);
+        try { await api.put("/users/visibility", { settings: newSettings }); } 
+        catch(e) { console.error(e); }
     };
 
     const connectPlatform = async (platform: string) => {
         const url = prompt(`Enter your ${platform} Profile URL/Handle:`);
         if (!url) return;
         try {
-            await api.post(`/users/connect/${platform}`, { handle_or_url: url });
+            const res = await api.post(`/users/connect/${platform}`, { handle_or_url: url });
             setConnectedAccounts((prev: any) => ({ ...prev, [platform]: url }));
-            alert(`Connected ${platform}!`);
-        } catch (e) { alert("Failed to connect."); }
+            if (res.data.stats) setPlatformStats((prev: any) => ({ ...prev, [platform]: res.data.stats }));
+            if (res.data.breakdown) setTrustBreakdown(res.data.breakdown);
+            alert(`Connected ${platform} successfully!`);
+        } catch (e) { alert("Failed to verify account. Please check the handle/url."); }
     };
 
     const removeSkill = (name: string) => setSkills(skills.filter(s => s.name !== name));
     const addSocialLink = () => { if (newLinkUrl && newLinkPlatform) { setSocialLinks([...socialLinks, { platform: newLinkPlatform, url: newLinkUrl }]); setNewLinkUrl(""); setNewLinkPlatform(""); } };
-    const addProfLink = () => { if (newProfUrl && newProfPlatform) { setProfLinks([...profLinks, { platform: newProfPlatform, url: newProfUrl }]); setNewProfUrl(""); setNewProfPlatform(""); } };
     const addAchievement = () => { if (achTitle) { setAchievements([...achievements, { title: achTitle, description: achDesc }]); setAchTitle(""); setAchDesc(""); } };
     const toggleDay = (i: number) => { const n = [...availability]; n[i].enabled = !n[i].enabled; setAvailability(n); };
     const addSlot = (i: number) => { const n = [...availability]; n[i].slots.push({ start: "09:00", end: "12:00" }); setAvailability(n); };
     const removeSlot = (d: number, s: number) => { const n = [...availability]; n[d].slots = n[d].slots.filter((_, idx) => idx !== s); setAvailability(n); };
     const updateSlot = (d: number, s: number, f: 'start' | 'end', v: string) => { const n = [...availability]; n[d].slots[s][f] = v; setAvailability(n); };
     
+    // Quiz Functions
     const startSkillTest = async (skill: string) => { if (!confirm(`Start verification for ${skill}?`)) return; setQuizSkill(skill); setLoading(true); try { const res = await api.get(`/skills/start/${skill}`); setQuestions(res.data.questions); setShowQuiz(true); setCurrentQ(0); setUserAnswers([]); setQuizResult(null); setTimer(15); } catch (err) { alert("Error loading test."); } finally { setLoading(false); } };
     const handleAnswer = (optionIndex: number) => { const newAns = [...userAnswers, { id: questions[currentQ].id, selected: optionIndex }]; setUserAnswers(newAns); if (currentQ < questions.length - 1) { setCurrentQ(currentQ + 1); setTimer(15); } else { submitQuiz(newAns); } };
     useEffect(() => { if (!showQuiz || quizResult) return; if (timer > 0) { const t = setTimeout(() => setTimer(timer - 1), 1000); return () => clearTimeout(t); } else { handleAnswer(-1); } }, [timer, showQuiz, quizResult]);
     const submitQuiz = async (answers: any[]) => { try { const res = await api.post(`/skills/submit/${quizSkill}`, answers); setQuizResult(res.data); if (res.data.passed) setSkills([...skills, { name: quizSkill, level: res.data.level }]); } catch (err) { alert("Submission failed"); setShowQuiz(false); } };
 
     if (loading) return <div className="h-screen bg-gray-950 flex items-center justify-center"><Loader2 className="animate-spin text-purple-500" /></div>;
+
+    const totalTrust = trustBreakdown ? (
+        (Number(trustBreakdown.base) || 0) + 
+        (Number(trustBreakdown.github) || 0) + 
+        (Number(trustBreakdown.linkedin) || 0) + 
+        (Number(trustBreakdown.codeforces) || 0) + 
+        (Number(trustBreakdown.leetcode) || 0)
+    ) : 5.0;
 
     return (
         <div className="min-h-screen bg-[#050505] text-white pb-20">
@@ -165,48 +201,209 @@ export default function ProfilePage() {
                                         {AGES.map(a => <option key={a} value={a}>{a}</option>)}
                                     </select>
                                 </div>
+                                
+                                {/* EMAIL SECTION */}
                                 <div>
-                                    <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Institute / Organization</label>
-                                    <div className="relative">
-                                        <GraduationCap className="absolute left-3 top-3.5 w-4 h-4 text-gray-500" />
-                                        <input className="w-full bg-black border border-white/10 rounded-xl p-3 pl-10 text-sm focus:border-purple-500 transition-all outline-none" placeholder="University Name" value={school} onChange={e => setSchool(e.target.value)} />
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Email Address</label>
+                                        <button 
+                                            onClick={() => toggleVisibility('email')} 
+                                            className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.email ? "text-green-400" : "text-gray-600 hover:text-gray-400"}`}
+                                        >
+                                            {visibility.email ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                                            {visibility.email ? "Visible to Public" : "Hidden"}
+                                        </button>
                                     </div>
+                                    <div className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-gray-400 flex items-center gap-3 cursor-not-allowed">
+                                        <Mail className="w-4 h-4 opacity-50" />
+                                        <span className="flex-1 font-mono">{email}</span>
+                                    </div>
+                                    <p className="text-[10px] text-gray-600 mt-1.5 flex items-center gap-1">
+                                        <ShieldCheck className="w-3 h-3" />
+                                        Email cannot be changed manually.
+                                    </p>
                                 </div>
+
                                 <div>
                                     <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Mini Bio</label>
                                     <textarea className="w-full bg-black border border-white/10 rounded-xl p-3 h-32 text-sm focus:border-purple-500 transition-all outline-none resize-none" value={about} onChange={e => setAbout(e.target.value)} placeholder="Tell the community about yourself..." />
                                 </div>
                             </div>
                         </div>
+                        
+                        {/* TRUST SCORE BREAKDOWN (UPDATED) */}
+                        {trustBreakdown && (
+                            <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-lg font-bold flex items-center gap-2 text-green-400">
+                                        <ShieldCheck className="w-5 h-5" /> Trust Analysis
+                                    </h3>
+                                    <span className="text-2xl font-black text-white">{Math.min(7.0, totalTrust).toFixed(1)}<span className="text-gray-500 text-sm">/7</span></span>
+                                </div>
+                                
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center bg-black p-3 rounded-xl border border-white/10">
+                                        <span className="text-gray-400 text-sm font-bold">Base Score</span>
+                                        <span className="text-green-400 font-bold">{trustBreakdown.base?.toFixed(1) || "5.0"}</span>
+                                    </div>
+                                    
+                                    {/* Github Section */}
+                                    <div className="bg-black p-3 rounded-xl border border-white/10">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-gray-300 text-sm font-bold flex items-center gap-2"><Github className="w-3 h-3"/> GitHub</span>
+                                            <span className="text-green-400 text-xs font-mono">+{Number(trustBreakdown.github || 0).toFixed(1)}</span>
+                                        </div>
+                                        {trustBreakdown.details && trustBreakdown.details.some((d: string) => d.includes("GitHub")) ? (
+                                            <div className="space-y-1 pl-5 border-l border-white/10">
+                                                {trustBreakdown.details.filter((d:string) => d.includes("GitHub")).map((d:string, i:number) => (
+                                                    <p key={i} className="text-[10px] text-gray-500">{d.replace("GitHub: ", "")}</p>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <div className="pl-5 text-[10px] text-gray-500 italic">No GitHub stats available</div>
+                                        )}
+                                    </div>
+
+                                    {/* Other Platforms */}
+                                    {trustBreakdown.details?.filter((d:string) => !d.includes("GitHub")).map((detail: string, i: number) => {
+                                        const parts = detail.split(":");
+                                        const platform = parts[0];
+                                        const info = parts[1] || "";
+                                        return (
+                                            <div key={i} className="flex justify-between items-center bg-black p-3 rounded-xl border border-white/10">
+                                                <span className="text-gray-300 text-sm">{platform}</span>
+                                                <span className="text-green-400 text-[10px] font-mono">{info}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        )}
 
                         <div className="bg-gradient-to-br from-[#1a1a1a] to-black border border-yellow-500/20 p-6 rounded-[2rem]">
-                            <div className="flex items-center justify-between mb-6">
-                                <h3 className="text-lg font-bold text-yellow-500 flex items-center gap-2"><Zap className="w-5 h-5" /> Verifications</h3>
-                                <ShieldCheck className="w-5 h-5 text-yellow-500/50" />
-                            </div>
-                            <div className="space-y-3">
-                                {[
-                                    { id: 'linkedin', icon: <Linkedin className="w-4 h-4"/>, label: 'LinkedIn' },
-                                    { id: 'codeforces', icon: <Code className="w-4 h-4"/>, label: 'Codeforces' },
-                                    { id: 'leetcode', icon: <Code2 className="w-4 h-4"/>, label: 'LeetCode' }
-                                ].map((acc) => (
-                                    <button 
-                                        key={acc.id}
-                                        onClick={() => connectPlatform(acc.id)} 
-                                        disabled={!!connectedAccounts[acc.id]} 
-                                        className={`w-full p-4 rounded-2xl flex items-center justify-between text-sm font-bold transition-all border ${connectedAccounts[acc.id] ? 'bg-white/5 border-white/10 text-gray-400' : 'bg-black border-white/5 hover:border-white/20'}`}
-                                    >
-                                        <span className="flex items-center gap-3">{acc.icon} {acc.label}</span>
-                                        {connectedAccounts[acc.id] ? <CheckCircle className="w-4 h-4 text-green-500" /> : <Plus className="w-4 h-4 text-gray-600" />}
-                                    </button>
-                                ))}
+                            <h3 className="text-lg font-bold text-yellow-500 mb-6 flex items-center gap-2">
+                                <Zap className="w-5 h-5" /> Connected Accounts
+                            </h3>
+                            <div className="space-y-4">
+                                {/* Codeforces */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center gap-3">
+                                            <Code className="w-5 h-5 text-gray-400"/>
+                                            <span className="font-bold text-sm">Codeforces</span>
+                                        </div>
+                                        {connectedAccounts.codeforces ? (
+                                            <button onClick={() => toggleVisibility('codeforces')} className="text-gray-500 hover:text-white">
+                                                {visibility.codeforces ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
+                                            </button>
+                                        ) : (
+                                            <button onClick={() => connectPlatform('codeforces')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>
+                                        )}
+                                    </div>
+                                    {connectedAccounts.codeforces && platformStats.codeforces && (
+                                        <div className="grid grid-cols-2 gap-2 mt-3">
+                                            <div className="bg-white/5 p-2 rounded-lg text-center">
+                                                <div className="text-[10px] text-gray-500 uppercase">Rating</div>
+                                                <div className="text-lg font-black text-yellow-500">{platformStats.codeforces.rating}</div>
+                                            </div>
+                                            <div className="bg-white/5 p-2 rounded-lg text-center">
+                                                <div className="text-[10px] text-gray-500 uppercase">Rank</div>
+                                                <div className="text-sm font-bold text-white">{platformStats.codeforces.rank}</div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* LeetCode */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center gap-3">
+                                            <Code2 className="w-5 h-5 text-gray-400"/>
+                                            <span className="font-bold text-sm">LeetCode</span>
+                                        </div>
+                                        {connectedAccounts.leetcode ? (
+                                            <button onClick={() => toggleVisibility('leetcode')} className="text-gray-500 hover:text-white">
+                                                {visibility.leetcode ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
+                                            </button>
+                                        ) : (
+                                            <button onClick={() => connectPlatform('leetcode')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>
+                                        )}
+                                    </div>
+                                    {connectedAccounts.leetcode && platformStats.leetcode && (
+                                        <div className="mt-3 bg-white/5 p-2 rounded-lg text-center">
+                                            <div className="text-[10px] text-gray-500 uppercase">Problems Solved</div>
+                                            <div className="text-lg font-black text-orange-500">{platformStats.leetcode.total_solved}</div>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* LinkedIn */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4 flex justify-between items-center">
+                                    <div className="flex items-center gap-3">
+                                        <Linkedin className="w-5 h-5 text-gray-400"/>
+                                        <span className="font-bold text-sm">LinkedIn</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {connectedAccounts.linkedin ? <CheckCircle className="w-4 h-4 text-green-500"/> : <button onClick={() => connectPlatform('linkedin')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>}
+                                        {connectedAccounts.linkedin && (
+                                            <button onClick={() => toggleVisibility('linkedin')} className="text-gray-500 hover:text-white ml-2">
+                                                {visibility.linkedin ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>}
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    {/* RIGHT COLUMN: EXPERTISE, SOCIALS, ACHIEVEMENTS */}
+                    {/* RIGHT COLUMN: EXPERTISE, EDUCATION, SOCIALS, ACHIEVEMENTS */}
                     <div className="lg:col-span-8 space-y-8">
                         
+                        {/* ACADEMIC QUALIFICATIONS */}
+                        <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
+                            <div className="flex justify-between items-center mb-6">
+                                <h3 className="text-lg font-bold flex items-center gap-2 text-purple-400">
+                                    <GraduationCap className="w-5 h-5" /> Academic Qualifications
+                                </h3>
+                                <button onClick={() => setEducationList([...educationList, { institute: "", course: "", year_of_study: "", is_completed: false, is_visible: true }])} className="p-2 bg-white/5 hover:bg-white/10 rounded-xl transition">
+                                    <Plus className="w-4 h-4" />
+                                </button>
+                            </div>
+                            
+                            <div className="space-y-4">
+                                {educationList.map((edu, index) => (
+                                    <div key={index} className="p-4 bg-black border border-white/10 rounded-xl relative group">
+                                        <button onClick={() => setEducationList(educationList.filter((_, i) => i !== index))} className="absolute top-2 right-2 text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all">
+                                            <X className="w-4 h-4" />
+                                        </button>
+
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+                                            <input placeholder="Institute Name" value={edu.institute} onChange={(e) => { const n = [...educationList]; n[index].institute = e.target.value; setEducationList(n); }} className="bg-white/5 border border-white/10 rounded-lg p-2 text-sm outline-none focus:border-purple-500 transition-colors" />
+                                            <input placeholder="Course (e.g. B.Tech)" value={edu.course} onChange={(e) => { const n = [...educationList]; n[index].course = e.target.value; setEducationList(n); }} className="bg-white/5 border border-white/10 rounded-lg p-2 text-sm outline-none focus:border-purple-500 transition-colors" />
+                                        </div>
+
+                                        <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400">
+                                            <label className="flex items-center gap-2 cursor-pointer bg-white/5 px-3 py-1.5 rounded-lg hover:bg-white/10 transition">
+                                                <input type="checkbox" checked={edu.is_completed} onChange={(e) => { const n = [...educationList]; n[index].is_completed = e.target.checked; setEducationList(n); }} />
+                                                Completed?
+                                            </label>
+
+                                            {!edu.is_completed && (
+                                                <input placeholder="Year (e.g. 3rd)" value={edu.year_of_study || ""} onChange={(e) => { const n = [...educationList]; n[index].year_of_study = e.target.value; setEducationList(n); }} className="bg-white/5 border border-white/10 rounded-lg p-1.5 w-24 text-center outline-none" />
+                                            )}
+
+                                            <label className="flex items-center gap-2 cursor-pointer ml-auto text-gray-500 hover:text-white transition">
+                                                <input type="checkbox" checked={edu.is_visible} onChange={(e) => { const n = [...educationList]; n[index].is_visible = e.target.checked; setEducationList(n); }} className="hidden" />
+                                                {edu.is_visible ? <Eye className="w-3 h-3 text-green-400" /> : <EyeOff className="w-3 h-3" />}
+                                                {edu.is_visible ? "Visible" : "Hidden"}
+                                            </label>
+                                        </div>
+                                    </div>
+                                ))}
+                                {educationList.length === 0 && <div className="text-center text-gray-600 text-sm py-4">Add your education details to find better peers.</div>}
+                            </div>
+                        </div>
+
                         {/* EXPERTISE SECTION */}
                         <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2.5rem]">
                             <div className="flex justify-between items-center mb-8">
@@ -216,7 +413,6 @@ export default function ProfilePage() {
                                     {PRESET_SKILLS.filter(s => !skills.find(sk => sk.name === s)).map(s => <option key={s} value={s}>{s}</option>)}
                                 </select>
                             </div>
-                            
                             <div className="flex flex-wrap gap-3">
                                 {skills.length > 0 ? skills.map(s => (
                                     <div key={s.name} className="group relative flex items-center gap-2 bg-black border border-white/10 pl-4 pr-2 py-2 rounded-2xl hover:border-blue-500/50 transition-all">
@@ -232,11 +428,10 @@ export default function ProfilePage() {
                             </div>
                         </div>
 
-                        {/* SOCIAL PRESENCE REFINED */}
+                        {/* SOCIAL PRESENCE */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] flex flex-col">
                                 <h3 className="font-bold mb-6 text-pink-400 flex items-center gap-2"><Heart className="w-5 h-5" /> Social Presence</h3>
-                                
                                 <div className="space-y-2 flex-1 overflow-y-auto max-h-60 mb-6 pr-1 custom-scrollbar">
                                     {socialLinks.length > 0 ? socialLinks.map((l, i) => (
                                         <div key={i} className="flex items-center justify-between bg-black border border-white/5 p-3 rounded-xl group transition-all hover:bg-white/5">
@@ -263,11 +458,10 @@ export default function ProfilePage() {
                                         </div>
                                     )}
                                 </div>
-
                                 <div className="mt-auto space-y-3 pt-4 border-t border-white/5">
                                     <div className="grid grid-cols-2 gap-2">
-                                        <input className="bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-pink-500/50 transition-all" placeholder="Platform (e.g. Github)" value={newLinkPlatform} onChange={e => setNewLinkPlatform(e.target.value)} />
-                                        <input className="bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-pink-500/50 transition-all" placeholder="Profile URL" value={newLinkUrl} onChange={e => setNewLinkUrl(e.target.value)} />
+                                        <input className="bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-pink-500/50 transition-all" placeholder="Platform" value={newLinkPlatform} onChange={e => setNewLinkPlatform(e.target.value)} />
+                                        <input className="bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-pink-500/50 transition-all" placeholder="URL" value={newLinkUrl} onChange={e => setNewLinkUrl(e.target.value)} />
                                     </div>
                                     <button onClick={addSocialLink} className="w-full py-3 bg-white text-black rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-200 transition-all">
                                         <Plus className="w-4 h-4" /> Add Social Link
@@ -275,10 +469,14 @@ export default function ProfilePage() {
                                 </div>
                             </div>
 
-                            {/* ACHIEVEMENTS REFINED */}
+                            {/* ACHIEVEMENTS */}
                             <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] flex flex-col">
-                                <h3 className="font-bold mb-6 text-orange-400 flex items-center gap-2"><Award className="w-5 h-5" /> Achievements</h3>
-                                
+                                <div className="flex justify-between items-center mb-6">
+                                    <h3 className="font-bold text-orange-400 flex items-center gap-2"><Award className="w-5 h-5" /> Achievements</h3>
+                                    <button onClick={() => toggleVisibility('achievements')} className="text-gray-500 hover:text-white">
+                                        {visibility.achievements ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                                    </button>
+                                </div>
                                 <div className="space-y-2 flex-1 overflow-y-auto max-h-60 mb-6 pr-1 custom-scrollbar">
                                     {achievements.length > 0 ? achievements.map((a, i) => (
                                         <div key={i} className="bg-black border border-white/5 p-3 rounded-xl group relative hover:bg-white/5 transition-all">
@@ -295,7 +493,6 @@ export default function ProfilePage() {
                                         </div>
                                     )}
                                 </div>
-
                                 <div className="mt-auto space-y-2 pt-4 border-t border-white/5">
                                     <input className="w-full bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-orange-500/50 transition-all" placeholder="Achievement Title" value={achTitle} onChange={e => setAchTitle(e.target.value)} />
                                     <div className="flex gap-2">
@@ -308,10 +505,15 @@ export default function ProfilePage() {
                             </div>
                         </div>
 
-                        {/* PEER TESTIMONIALS */}
+                        {/* PEER TESTIMONIALS (RESTORED) */}
                         {ratings.length > 0 && (
                             <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2.5rem]">
-                                <h3 className="text-xl font-bold text-yellow-400 flex items-center gap-3 mb-8"><Star className="w-6 h-6" /> Peer Testimonials</h3>
+                                <div className="flex justify-between items-center mb-8">
+                                    <h3 className="text-xl font-bold text-yellow-400 flex items-center gap-3"><Star className="w-6 h-6" /> Peer Testimonials</h3>
+                                    <button onClick={() => toggleVisibility('ratings')} className="text-gray-500 hover:text-white">
+                                        {visibility.ratings ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                                    </button>
+                                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {ratings.map((r, i) => (
                                         <div key={i} className="bg-black border border-white/10 p-5 rounded-2xl relative overflow-hidden group hover:border-yellow-500/30 transition-all">
@@ -325,7 +527,7 @@ export default function ProfilePage() {
                             </div>
                         )}
 
-                        {/* AVAILABILITY BOX */}
+                        {/* AVAILABILITY */}
                         <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2.5rem]">
                             <h3 className="text-xl font-bold flex items-center gap-3 mb-8 text-green-400"><Calendar className="w-6 h-6" /> Collaboration Schedule</h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -357,6 +559,7 @@ export default function ProfilePage() {
                 </div>
             </main>
 
+            {/* QUIZ MODAL */}
             <AnimatePresence>
                 {showQuiz && (
                     <div className="fixed inset-0 bg-black/95 backdrop-blur-md flex items-center justify-center z-[100] p-4">
@@ -406,19 +609,10 @@ export default function ProfilePage() {
             </AnimatePresence>
 
             <style jsx global>{`
-                .custom-scrollbar::-webkit-scrollbar {
-                    width: 4px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-track {
-                    background: transparent;
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb {
-                    background: #222;
-                    border-radius: 10px;
-                }
-                .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-                    background: #333;
-                }
+                .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #333; }
             `}</style>
         </div>
     );
