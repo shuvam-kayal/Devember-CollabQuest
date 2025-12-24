@@ -4,7 +4,7 @@ import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    ShieldCheck, Bell, MessageSquare, Check, X, Loader2, AlertTriangle, LogOut, User as UserIcon, Settings, LogIn
+    ShieldCheck, Bell, MessageSquare, Check, X, Loader2, AlertTriangle, LogOut, User as UserIcon, Settings
 } from "lucide-react";
 import Link from "next/link";
 
@@ -97,6 +97,7 @@ export default function GlobalHeader() {
                     alert(data.message);
                     window.location.href = "/dashboard";
                 } else if (data.event === "message") {
+                    // Update Unread Count if message is not from me
                     const msg = data.message;
                     if (msg && msg.sender_id !== (res.data._id || res.data.id)) {
                         setUnreadCount(p => p + 1);
@@ -184,6 +185,8 @@ export default function GlobalHeader() {
 
     const getScoreColor = (score: number) => { if (score >= 8) return "text-green-400"; if (score >= 5) return "text-yellow-400"; return "text-red-400"; };
 
+    if (!user) return <div className="h-20"></div>;
+
     return (
         <header className="border-b border-gray-800 mb-8 py-4 bg-gray-950/80 backdrop-blur-md sticky top-0 z-50">
             <div className="max-w-6xl mx-auto flex items-center justify-between px-8">
@@ -199,106 +202,99 @@ export default function GlobalHeader() {
                 </div>
 
                 <div className="flex items-center gap-4">
-                    {user ? (
-                        <>
-                            {/* NOTIFICATIONS */}
-                            <div className="relative" ref={notifRef}>
-                                <button onClick={toggleNotifications} className="p-2.5 bg-gray-900 hover:bg-gray-800 rounded-full border border-gray-700 transition relative">
-                                    <Bell className="w-5 h-5 text-yellow-400" />
-                                    {notifications.filter(n => !n.is_read).length > 0 && <span className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">{notifications.filter(n => !n.is_read).length}</span>}
-                                </button>
-                                <AnimatePresence>
-                                    {showNotifDropdown && (
-                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 overflow-hidden">
-                                            <div className="p-3 border-b border-gray-800 font-bold text-sm bg-gray-950 flex justify-between">
-                                                <span>Notifications</span>
-                                                <button onClick={() => setShowNotifDropdown(false)}><X className="w-4 h-4 text-gray-500" /></button>
-                                            </div>
-                                            <div className="max-h-80 overflow-y-auto">
-                                                {notifications.length === 0 ? <p className="p-4 text-gray-500 text-sm text-center">No notifications</p> : (
-                                                    notifications.map(n => {
-                                                        const isDecided = n.action_status === 'accepted' || n.action_status === 'rejected' || n.action_status === 'voted';
-                                                        const isInvite = n.type === 'team_invite' || n.type === 'join_request';
-                                                        const isVote = n.type === 'deletion_request' || n.type === 'completion_request';
 
-                                                        return (
-                                                            <div key={n._id} className={`p-3 border-b border-gray-800 ${!n.is_read ? 'bg-gray-800/50' : ''}`}>
-                                                                <p className="text-xs text-gray-300 mb-2">{n.message}</p>
+                    {/* NOTIFICATIONS */}
+                    <div className="relative" ref={notifRef}>
+                        <button onClick={toggleNotifications} className="p-2.5 bg-gray-900 hover:bg-gray-800 rounded-full border border-gray-700 transition relative">
+                            <Bell className="w-5 h-5 text-yellow-400" />
+                            {notifications.filter(n => !n.is_read).length > 0 && <span className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">{notifications.filter(n => !n.is_read).length}</span>}
+                        </button>
+                        <AnimatePresence>
+                            {showNotifDropdown && (
+                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 overflow-hidden">
+                                    <div className="p-3 border-b border-gray-800 font-bold text-sm bg-gray-950 flex justify-between">
+                                        <span>Notifications</span>
+                                        <button onClick={() => setShowNotifDropdown(false)}><X className="w-4 h-4 text-gray-500" /></button>
+                                    </div>
+                                    <div className="max-h-80 overflow-y-auto">
+                                        {notifications.length === 0 ? <p className="p-4 text-gray-500 text-sm text-center">No notifications</p> : (
+                                            notifications.map(n => {
+                                                const isDecided = n.action_status === 'accepted' || n.action_status === 'rejected' || n.action_status === 'voted';
+                                                const isInvite = n.type === 'team_invite' || n.type === 'join_request';
+                                                const isVote = n.type === 'deletion_request' || n.type === 'completion_request';
 
-                                                                {isInvite && !isDecided && (
-                                                                    <div className="flex gap-2 mt-2">
-                                                                        <button onClick={() => handleAccept(n)} disabled={processingId === n._id} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{processingId === n._id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Check className="w-3 h-3" /> Accept</>}</button>
-                                                                        <button onClick={() => handleReject(n)} disabled={processingId === n._id} className="flex-1 bg-red-600 hover:bg-red-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1"><X className="w-3 h-3" /> Reject</button>
-                                                                    </div>
-                                                                )}
+                                                return (
+                                                    <div key={n._id} className={`p-3 border-b border-gray-800 ${!n.is_read ? 'bg-gray-800/50' : ''}`}>
+                                                        <p className="text-xs text-gray-300 mb-2">{n.message}</p>
 
-                                                                {isVote && !isDecided && (
-                                                                    <div className="flex gap-2 mt-2">
-                                                                        <button onClick={() => handleVote(n, 'approve')} disabled={processingId === n._id} className={`flex-1 ${n.type === 'completion_request' ? 'bg-green-600 hover:bg-green-500' : 'bg-red-600 hover:bg-red-500'} text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1`}>
-                                                                            {n.type === 'completion_request' ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-                                                                            {n.type === 'completion_request' ? 'Complete' : 'Delete'}
-                                                                        </button>
-                                                                        <button onClick={() => handleVote(n, 'reject')} disabled={processingId === n._id} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">Reject</button>
-                                                                    </div>
-                                                                )}
-
-                                                                {isDecided && (
-                                                                    <div className={`text-xs mt-1 font-bold ${n.action_status === 'accepted' ? 'text-green-400' : n.action_status === 'voted' ? 'text-blue-400' : 'text-red-400'}`}>
-                                                                        {n.action_status === 'accepted' ? 'Accepted' : n.action_status === 'voted' ? 'Voted' : 'Rejected'}
-                                                                    </div>
-                                                                )}
+                                                        {isInvite && !isDecided && (
+                                                            <div className="flex gap-2 mt-2">
+                                                                <button onClick={() => handleAccept(n)} disabled={processingId === n._id} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{processingId === n._id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Check className="w-3 h-3" /> Accept</>}</button>
+                                                                <button onClick={() => handleReject(n)} disabled={processingId === n._id} className="flex-1 bg-red-600 hover:bg-red-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1"><X className="w-3 h-3" /> Reject</button>
                                                             </div>
-                                                        )
-                                                    })
-                                                )}
-                                            </div>
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </div>
+                                                        )}
 
-                            <Link href="/chat">
-                                <button className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-full border border-gray-700 transition relative">
-                                    <MessageSquare className="w-4 h-4 text-blue-400" />
-                                    <span className="hidden sm:inline">Messages</span>
-                                    {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{unreadCount}</span>}
-                                </button>
-                            </Link>
+                                                        {isVote && !isDecided && (
+                                                            <div className="flex gap-2 mt-2">
+                                                                <button onClick={() => handleVote(n, 'approve')} disabled={processingId === n._id} className={`flex-1 ${n.type === 'completion_request' ? 'bg-green-600 hover:bg-green-500' : 'bg-red-600 hover:bg-red-500'} text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1`}>
+                                                                    {n.type === 'completion_request' ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                                                                    {n.type === 'completion_request' ? 'Complete' : 'Delete'}
+                                                                </button>
+                                                                <button onClick={() => handleVote(n, 'reject')} disabled={processingId === n._id} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">Reject</button>
+                                                            </div>
+                                                        )}
 
-                            {/* PROFILE */}
-                            <div className="relative" ref={profileRef}>
-                                <button onClick={() => setShowProfileDropdown(!showProfileDropdown)} className="focus:outline-none">
-                                    <img src={user.avatar_url || "https://github.com/shadcn.png"} alt="Profile" className="w-10 h-10 rounded-full border border-gray-700 hover:border-gray-500 transition object-cover" />
-                                </button>
-                                <AnimatePresence>
-                                    {showProfileDropdown && (
-                                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-56 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 overflow-hidden">
-                                            <div className="p-4 border-b border-gray-800 flex items-center gap-3 bg-gray-950/50">
-                                                <ShieldCheck className={getScoreColor(user.trust_score) + " h-6 w-6"} />
-                                                <div className="flex flex-col"><span className="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Trust Score</span><span className="font-bold text-lg leading-none text-white">{user.trust_score.toFixed(1)}</span></div>
-                                            </div>
-                                            <div className="p-2">
-                                                <Link href="/profile" onClick={() => setShowProfileDropdown(false)}><div className="p-3 hover:bg-gray-800 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-gray-300 hover:text-white transition mb-1"><UserIcon className="w-4 h-4 text-blue-400" /> My Profile</div></Link>
-                                                <Link href="/settings" onClick={() => setShowProfileDropdown(false)}>
-                                                    <div className="p-3 hover:bg-gray-800 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-gray-300 hover:text-white transition mb-1">
-                                                        <Settings className="w-4 h-4 text-purple-400" /> Settings
+                                                        {isDecided && (
+                                                            <div className={`text-xs mt-1 font-bold ${n.action_status === 'accepted' ? 'text-green-400' : n.action_status === 'voted' ? 'text-blue-400' : 'text-red-400'}`}>
+                                                                {n.action_status === 'accepted' ? 'Accepted' : n.action_status === 'voted' ? 'Voted' : 'Rejected'}
+                                                            </div>
+                                                        )}
                                                     </div>
-                                                </Link>
-                                                <button onClick={handleLogout} className="w-full text-left p-3 hover:bg-red-900/20 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-red-400 hover:text-red-300 transition"><LogOut className="w-4 h-4" /> Logout</button>
+                                                )
+                                            })
+                                        )}
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
+
+                    <Link href="/chat">
+                        <button className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-full border border-gray-700 transition relative">
+                            <MessageSquare className="w-4 h-4 text-blue-400" />
+                            <span className="hidden sm:inline">Messages</span>
+                            {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{unreadCount}</span>}
+                        </button>
+                    </Link>
+
+                    {/* PROFILE */}
+                    <div className="relative" ref={profileRef}>
+                        <button onClick={() => setShowProfileDropdown(!showProfileDropdown)} className="focus:outline-none">
+                            <img src={user.avatar_url || "https://github.com/shadcn.png"} alt="Profile" className="w-10 h-10 rounded-full border border-gray-700 hover:border-gray-500 transition object-cover" />
+                        </button>
+                        <AnimatePresence>
+                            {showProfileDropdown && (
+                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-56 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 overflow-hidden">
+                                    <div className="p-4 border-b border-gray-800 flex items-center gap-3 bg-gray-950/50">
+                                        <ShieldCheck className={getScoreColor(user.trust_score) + " h-6 w-6"} />
+                                        <div className="flex flex-col"><span className="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Trust Score</span><span className="font-bold text-lg leading-none text-white">{user.trust_score.toFixed(1)}</span></div>
+                                    </div>
+                                    <div className="p-2">
+                                        <Link href="/profile" onClick={() => setShowProfileDropdown(false)}><div className="p-3 hover:bg-gray-800 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-gray-300 hover:text-white transition mb-1"><UserIcon className="w-4 h-4 text-blue-400" /> My Profile</div></Link>
+                                        
+                                        {/* ADDED SETTINGS LINK */}
+                                        <Link href="/settings" onClick={() => setShowProfileDropdown(false)}>
+                                            <div className="p-3 hover:bg-gray-800 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-gray-300 hover:text-white transition mb-1">
+                                                <Settings className="w-4 h-4 text-purple-400" /> Settings
                                             </div>
-                                        </motion.div>
-                                    )}
-                                </AnimatePresence>
-                            </div>
-                        </>
-                    ) : (
-                        // GUEST VIEW
-                        <Link href="/">
-                            <button className="flex items-center gap-2 bg-purple-600 hover:bg-purple-500 px-5 py-2 rounded-full text-white font-bold text-sm transition shadow-lg shadow-purple-900/20">
-                                <LogIn className="w-4 h-4" /> Sign In
-                            </button>
-                        </Link>
-                    )}
+                                        </Link>
+
+                                        <button onClick={handleLogout} className="w-full text-left p-3 hover:bg-red-900/20 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-red-400 hover:text-red-300 transition"><LogOut className="w-4 h-4" /> Logout</button>
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+                    </div>
                 </div>
             </div>
         </header>
