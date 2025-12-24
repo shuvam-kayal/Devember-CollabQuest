@@ -562,6 +562,19 @@ async def get_stack_suggestions(request: SuggestionRequest, current_user: User =
     suggestions = await suggest_tech_stack(request.description, request.current_skills)
     return suggestions
 
+@router.post("/{team_id}/roadmap")
+async def create_team_roadmap(team_id: str, current_user: User = Depends(get_current_user)):
+    team = await Team.get(team_id)
+    if not team or str(current_user.id) != team.members[0]: raise HTTPException(403)
+    weeks = 4
+    if team.target_completion_date:
+        delta = team.target_completion_date - datetime.now(team.target_completion_date.tzinfo)
+        weeks = max(1, round(delta.days / 7))
+    ai_plan = await generate_roadmap(team.description, team.needed_skills, weeks=weeks)
+    team.project_roadmap = ai_plan
+    await team.save()
+    return team
+
 @router.post("/{team_id}/leave")
 async def leave_project(team_id: str, req: ActionWithExplanation, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)

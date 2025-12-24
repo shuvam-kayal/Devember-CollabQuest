@@ -1,11 +1,14 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, HTTPException, UploadFile, File
 from typing import List, Optional, Dict
 from pydantic import BaseModel
-from app.models import Message, User, ChatGroup, Team, Match, Block, UnreadCount
+from app.models import Message, User, ChatGroup, Team, Match, Block, UnreadCount, Attachment
 from app.auth.dependencies import get_current_user
 from beanie.operators import Or, In, And
 from datetime import datetime
 import traceback
+import shutil
+import os
+import uuid
 
 router = APIRouter()
 
@@ -50,6 +53,41 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # --- ROUTES ---
+
+@router.post("/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """
+    Uploads a file to the server and returns the URL and metadata.
+    """
+    try:
+        # Generate unique filename
+        file_ext = file.filename.split(".")[-1]
+        unique_name = f"{uuid.uuid4()}.{file_ext}"
+        file_path = f"uploads/{unique_name}"
+        
+        # Save file
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+            
+        # Determine File Type
+        content_type = file.content_type
+        file_type = "document"
+        if content_type.startswith("image/"): file_type = "image"
+        elif content_type.startswith("video/"): file_type = "video"
+        elif content_type.startswith("audio/"): file_type = "audio"
+
+        # Construct URL (Assuming local for now, replace with S3 in prod)
+        # Note: In production, use an ENV variable for the base URL
+        file_url = f"http://localhost:8000/uploads/{unique_name}"
+
+        return {
+            "url": file_url,
+            "file_type": file_type,
+            "name": file.filename
+        }
+    except Exception as e:
+        print(f"Upload Error: {e}")
+        raise HTTPException(500, "File upload failed")
 
 @router.post("/block/{user_id}")
 async def block_user(user_id: str, current_user: User = Depends(get_current_user)):
@@ -383,6 +421,7 @@ async def get_contacts(current_user: User = Depends(get_current_user)):
         if user: contacts.append({"id": str(user.id), "username": user.username, "avatar_url": user.avatar_url or "https://github.com/shadcn.png"})
     return contacts
 
+# --- UPDATED WEBSOCKET FOR SIGNALING ---
 @router.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: str):
     await manager.connect(websocket, user_id)
@@ -392,10 +431,47 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
         while True:
             data = await websocket.receive_json()
             recipient_id = data.get("recipient_id")
+            event_type = data.get("event") # 'message' OR 'offer' / 'answer' / 'ice-candidate' / 'hang-up'
+            
+            # --- SIGNALING HANDLING (Calls) ---
+            if event_type in ["offer", "answer", "ice-candidate", "hang-up"]:
+                signal_payload = {
+                    "event": event_type,
+                    "sender_id": user_id,
+                    "recipient_id": recipient_id,
+                    "data": data.get("data") # SDP or Candidate
+                }
+                
+                # Check if recipient is a group
+                group = await ChatGroup.get(recipient_id)
+                if group:
+                    # Broadcast signal to all group members except sender
+                    for member_id in group.members:
+                        if member_id != user_id:
+                            await manager.send_personal_message(signal_payload, member_id)
+                else:
+                    # Direct P2P Signal
+                    await manager.send_personal_message(signal_payload, recipient_id)
+                continue
+
+            # --- EXISTING CHAT MESSAGE HANDLING ---
             content = data.get("content")
-            if recipient_id and content:
-                msg = Message(sender_id=user_id, recipient_id=recipient_id, content=content, is_read=False)
+            attachments_data = data.get("attachments", [])
+            attachments_objs = [
+                Attachment(url=a["url"], file_type=a["file_type"], name=a["name"]) 
+                for a in attachments_data
+            ]
+
+            if recipient_id and (content or attachments_objs):
+                msg = Message(
+                    sender_id=user_id, 
+                    recipient_id=recipient_id, 
+                    content=content or "", 
+                    attachments=attachments_objs,
+                    is_read=False
+                )
                 await msg.insert()
+                
                 payload = msg.dict()
                 payload["id"] = str(msg.id)
                 payload["timestamp"] = str(msg.timestamp)
@@ -403,7 +479,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                 
                 group = await ChatGroup.get(recipient_id)
                 if group:
-                    # Group Message: Send to all members
                     for member_id in group.members:
                         if member_id != user_id:
                             uc = await UnreadCount.find_one(UnreadCount.user_id == member_id, UnreadCount.target_id == recipient_id)
@@ -417,7 +492,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: str):
                             
                             await manager.send_personal_message({"event": "message", "message": payload}, member_id)
                 else: 
-                    # Direct Message: Send to recipient
                     await manager.send_personal_message({"event": "message", "message": payload}, recipient_id)
     except WebSocketDisconnect: manager.disconnect(websocket, user_id)
     except Exception: manager.disconnect(websocket, user_id)
