@@ -147,7 +147,7 @@ async def update_trust_score(user):
 
     if linkedin_connected or linkedin_in_links:
         breakdown.linkedin = 0.1
-    breakdown.details.append("LinkedIn: Connected (+0.1)")
+        breakdown.details.append("LinkedIn: Connected (+0.1)")
 
     # 6. Final Summation
     total = (
