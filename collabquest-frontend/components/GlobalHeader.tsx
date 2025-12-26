@@ -4,9 +4,10 @@ import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    ShieldCheck, Bell, MessageSquare, Check, X, Loader2, AlertTriangle, LogOut, User as UserIcon, Settings
+    ShieldCheck, Bell, MessageSquare, Check, X, Loader2, User as UserIcon, Settings, LogOut, AlertTriangle
 } from "lucide-react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 
 interface UserProfile {
     username: string;
@@ -30,16 +31,43 @@ const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 export default function GlobalHeader() {
     const [user, setUser] = useState<UserProfile | null>(null);
     const [notifications, setNotifications] = useState<Notification[]>([]);
-    const [unreadCount, setUnreadCount] = useState(0);
+    const [unreadCount, setUnreadCount] = useState(0); // For Chat
+    const [pageTitle, setPageTitle] = useState("Dashboard");
 
     const [showNotifDropdown, setShowNotifDropdown] = useState(false);
     const [showProfileDropdown, setShowProfileDropdown] = useState(false);
-
     const [processingId, setProcessingId] = useState<string | null>(null);
 
     const notifRef = useRef<HTMLDivElement>(null);
     const profileRef = useRef<HTMLDivElement>(null);
+    
+    const pathname = usePathname();
+    const router = useRouter();
 
+    // --- 1. SMART TITLE LOGIC ---
+    useEffect(() => {
+        const segment = pathname.split("/").pop();
+        const isId = segment && segment.length > 15 && /\d/.test(segment);
+        
+        if (pathname.includes("/find-team")) setPageTitle("Find Team");
+        else if (pathname.includes("/projects")) setPageTitle("My Projects");
+        else if (isId) setPageTitle("Project Workspace");
+        else setPageTitle(segment?.replace(/-/g, " ") || "Dashboard");
+
+        const handleTitleUpdate = (e: any) => {
+            if (e.detail) setPageTitle(e.detail);
+        };
+
+        window.addEventListener("headerTitleUpdate", handleTitleUpdate);
+        window.addEventListener("dashboardUpdate", handleRefresh); // Listen for updates
+        
+        return () => {
+            window.removeEventListener("headerTitleUpdate", handleTitleUpdate);
+            window.removeEventListener("dashboardUpdate", handleRefresh);
+        };
+    }, [pathname]);
+
+    // --- 2. DATA FETCHING ---
     useEffect(() => {
         const token = Cookies.get("token");
         if (token) {
@@ -49,93 +77,73 @@ export default function GlobalHeader() {
         }
 
         document.addEventListener("mousedown", handleClickOutside);
-
-        const handleRefresh = () => {
-            if (token) {
-                fetchNotifications(token);
-                fetchUnreadCount(token);
-            }
-        };
-        window.addEventListener("triggerNotificationRefresh", handleRefresh);
-        window.addEventListener("dashboardUpdate", handleRefresh);
-
-        return () => {
-            document.removeEventListener("mousedown", handleClickOutside);
-            window.removeEventListener("triggerNotificationRefresh", handleRefresh);
-            window.removeEventListener("dashboardUpdate", handleRefresh);
-        };
+        return () => document.removeEventListener("mousedown", handleClickOutside);
     }, []);
 
-    const handleClickOutside = (event: MouseEvent) => {
-        if (notifRef.current && !notifRef.current.contains(event.target as Node)) {
-            setShowNotifDropdown(false);
-        }
-        if (profileRef.current && !profileRef.current.contains(event.target as Node)) {
-            setShowProfileDropdown(false);
+    const handleRefresh = () => {
+        const token = Cookies.get("token");
+        if (token) {
+            fetchNotifications(token);
+            fetchUnreadCount(token);
         }
     };
 
-    const handleLogout = () => {
-        Cookies.remove("token");
-        window.location.href = "/";
+    const handleClickOutside = (event: MouseEvent) => {
+        if (notifRef.current && !notifRef.current.contains(event.target as Node)) setShowNotifDropdown(false);
+        if (profileRef.current && !profileRef.current.contains(event.target as Node)) setShowProfileDropdown(false);
     };
+
+    const handleLogout = () => { Cookies.remove("token"); window.location.href = "/"; };
 
     const fetchUserProfile = async (jwt: string) => {
         try {
             const res = await api.get("/users/me");
             setUser(res.data);
-
             const ws = new WebSocket(`${WS_URL}/chat/ws/${res.data._id || res.data.id}`);
-
+            
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
-
                 if (data.event === "notification") {
                     setNotifications(prev => [data.notification, ...prev]);
                     window.dispatchEvent(new Event("dashboardUpdate"));
                 } else if (data.event === "team_deleted") {
                     alert(data.message);
                     window.location.href = "/dashboard";
-                } else if (data.event === "message") {
-                    // Update Unread Count if message is not from me
-                    const msg = data.message;
-                    if (msg && msg.sender_id !== (res.data._id || res.data.id)) {
-                        setUnreadCount(p => p + 1);
-                    }
+                } else if (data.event === "message" && data.message.sender_id !== (res.data._id || res.data.id)) {
+                    setUnreadCount(p => p + 1);
                 }
             };
         } catch (e) { console.error(e); }
     };
 
-    const fetchNotifications = async (jwt: string) => {
-        try {
-            const res = await api.get("/notifications/");
-            setNotifications(res.data);
-        } catch (e) { }
-    };
-
-    const fetchUnreadCount = async (jwt: string) => {
-        try {
-            const res = await api.get("/chat/unread-count");
-            setUnreadCount(res.data.count);
-        } catch (e) { }
-    }
-
+    const fetchNotifications = async (jwt: string) => { try { const res = await api.get("/notifications/"); setNotifications(res.data); } catch (e) { } };
+    const fetchUnreadCount = async (jwt: string) => { try { const res = await api.get("/chat/unread-count"); setUnreadCount(res.data.count); } catch (e) { } }
+    
+    // --- 3. NOTIFICATION LOGIC (Mark as Read) ---
     const toggleNotifications = async () => {
         const newState = !showNotifDropdown;
         setShowNotifDropdown(newState);
+        
+        // If opening, mark actionable items as read only visually until acted upon, 
+        // but mark informational items as read immediately in UI
         if (newState) {
-            setNotifications(prev => prev.map(n => (['team_invite', 'join_request', 'deletion_request', 'completion_request'].includes(n.type) && !n.action_status) ? n : { ...n, is_read: true }));
+            setNotifications(prev => prev.map(n => 
+                (['team_invite', 'join_request', 'deletion_request', 'completion_request'].includes(n.type) && !n.action_status) 
+                ? n 
+                : { ...n, is_read: true }
+            ));
+            
+            // Call API to mark all as read
             try { await api.post("/notifications/read-all", {}); } catch (e) { }
         }
     }
 
-    // --- ACTIONS ---
+    // --- 4. ACTION HANDLERS (Vote/Accept/Reject) ---
     const handleVote = async (notif: Notification, decision: 'approve' | 'reject') => {
         if (!notif.related_id) return;
         setProcessingId(notif._id);
-        const endpoint = notif.type === 'completion_request'
-            ? `/teams/${notif.related_id}/complete/vote`
+        const endpoint = notif.type === 'completion_request' 
+            ? `/teams/${notif.related_id}/complete/vote` 
             : `/teams/${notif.related_id}/delete/vote`;
 
         try {
@@ -165,6 +173,7 @@ export default function GlobalHeader() {
             let target = notif.type === "join_request" ? notif.sender_id : "ME";
             if (target === "ME" && user) target = user._id;
             await api.post(`/teams/${notif.related_id}/members`, { target_user_id: target });
+            // Use specific read status updates if your API supports it, or generic read
             await api.put(`/notifications/${notif._id}/read?status=accepted`, {});
             setNotifications(prev => prev.map(n => n._id === notif._id ? { ...n, is_read: true, action_status: "accepted" } : n));
             window.dispatchEvent(new Event("dashboardUpdate"));
@@ -183,117 +192,116 @@ export default function GlobalHeader() {
         } catch (err) { alert("Action failed"); } finally { setProcessingId(null); }
     };
 
-    const getScoreColor = (score: number) => { if (score >= 8) return "text-green-400"; if (score >= 5) return "text-yellow-400"; return "text-red-400"; };
+    if (!user) return <div className="h-20 bg-transparent"></div>;
 
-    if (!user) return <div className="h-20"></div>;
-
+    // --- RENDER ---
     return (
-        <header className="border-b border-gray-800 mb-8 py-4 bg-gray-950/80 backdrop-blur-md sticky top-0 z-50">
-            <div className="max-w-6xl mx-auto flex items-center justify-between px-8">
-                <div className="flex items-center gap-8">
-                    <Link href="/dashboard">
-                        <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent cursor-pointer">CollabQuest</h1>
-                    </Link>
-                    <nav className="hidden md:flex gap-6 text-sm font-medium text-gray-400">
-                        <Link href="/dashboard" className="hover:text-white transition">Dashboard</Link>
-                        <Link href="/find-team" className="hover:text-white transition">Marketplace</Link>
-                        <Link href="/matches?type=users" className="hover:text-white transition">Recruit</Link>
-                    </nav>
+        <header className="w-full h-20 px-8 flex items-center justify-between bg-transparent relative z-50">
+            
+            {/* LEFT: Clean Breadcrumbs */}
+            <div className="flex items-center gap-3 text-sm">
+                <span className="text-zinc-500 font-medium">Workspace</span> 
+                <span className="text-zinc-600">/</span> 
+                <h1 className="text-zinc-100 font-bold capitalize text-lg tracking-tight">{pageTitle}</h1>
+            </div>
+
+            {/* RIGHT: Actions */}
+            <div className="flex items-center gap-6">
+                
+                {/* Chat */}
+                <button onClick={() => router.push("/chat")} className="relative group">
+                    <MessageSquare className="w-5 h-5 text-zinc-400 group-hover:text-white transition-colors" />
+                    {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-[#0B0E14]"></span>}
+                </button>
+
+                {/* Notifications */}
+                <div className="relative" ref={notifRef}>
+                    <button onClick={toggleNotifications} className="relative group pt-1">
+                        <Bell className={`w-5 h-5 transition-colors ${notifications.some(n => !n.is_read) ? 'text-zinc-100' : 'text-zinc-400 group-hover:text-white'}`} />
+                        {notifications.filter(n => !n.is_read).length > 0 && (
+                            <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border-2 border-[#0B0E14]">
+                                {notifications.filter(n => !n.is_read).length}
+                            </span>
+                        )}
+                    </button>
+
+                    {/* Notification Dropdown */}
+                    <AnimatePresence>
+                        {showNotifDropdown && (
+                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-4 w-80 bg-[#111] border border-zinc-800 rounded-xl shadow-2xl z-50 overflow-hidden">
+                                <div className="p-4 border-b border-zinc-800 font-bold text-xs uppercase text-zinc-500 flex justify-between">
+                                    <span>Notifications</span>
+                                    <button onClick={() => setShowNotifDropdown(false)}><X className="w-4 h-4 hover:text-white"/></button>
+                                </div>
+                                <div className="max-h-80 overflow-y-auto custom-scrollbar p-1">
+                                    {notifications.length === 0 ? <p className="p-4 text-zinc-600 text-xs text-center">No new notifications</p> : 
+                                    notifications.map(n => {
+                                        const isDecided = n.action_status === 'accepted' || n.action_status === 'rejected' || n.action_status === 'voted';
+                                        const isInvite = n.type === 'team_invite' || n.type === 'join_request';
+                                        const isVote = n.type === 'deletion_request' || n.type === 'completion_request';
+
+                                        return (
+                                            <div key={n._id} className={`p-3 rounded-lg mb-1 border border-transparent ${!n.is_read ? 'bg-zinc-900/50 border-zinc-800' : 'hover:bg-zinc-900'}`}>
+                                                <p className="text-xs text-zinc-300 mb-2">{n.message}</p>
+                                                
+                                                {/* INVITE ACTIONS */}
+                                                {isInvite && !isDecided && (
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => handleAccept(n)} disabled={processingId === n._id} className="flex-1 bg-green-500/20 text-green-400 py-1.5 rounded text-[10px] font-bold hover:bg-green-500/30 flex justify-center items-center gap-1">
+                                                            {processingId === n._id ? <Loader2 className="w-3 h-3 animate-spin"/> : <><Check className="w-3 h-3"/> Accept</>}
+                                                        </button>
+                                                        <button onClick={() => handleReject(n)} disabled={processingId === n._id} className="flex-1 bg-red-500/20 text-red-400 py-1.5 rounded text-[10px] font-bold hover:bg-red-500/30 flex justify-center items-center gap-1">
+                                                            <X className="w-3 h-3"/> Reject
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* VOTE ACTIONS */}
+                                                {isVote && !isDecided && (
+                                                    <div className="flex gap-2">
+                                                        <button onClick={() => handleVote(n, 'approve')} disabled={processingId === n._id} className={`flex-1 ${n.type === 'completion_request' ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' : 'bg-red-500/20 text-red-400 hover:bg-red-500/30'} py-1.5 rounded text-[10px] font-bold flex justify-center items-center gap-1`}>
+                                                             {n.type === 'completion_request' ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                                                             {n.type === 'completion_request' ? 'Complete' : 'Delete'}
+                                                        </button>
+                                                        <button onClick={() => handleVote(n, 'reject')} disabled={processingId === n._id} className="flex-1 bg-zinc-700/50 text-zinc-300 py-1.5 rounded text-[10px] font-bold hover:bg-zinc-700 flex justify-center items-center gap-1">
+                                                            Reject
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* STATUS TEXT */}
+                                                {isDecided && (
+                                                    <div className={`text-[10px] mt-1 font-bold ${n.action_status === 'accepted' ? 'text-green-500' : n.action_status === 'voted' ? 'text-blue-500' : 'text-red-500'}`}>
+                                                        {n.action_status === 'accepted' ? 'Accepted' : n.action_status === 'voted' ? 'Voted' : 'Rejected'}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </div>
 
-                <div className="flex items-center gap-4">
-
-                    {/* NOTIFICATIONS */}
-                    <div className="relative" ref={notifRef}>
-                        <button onClick={toggleNotifications} className="p-2.5 bg-gray-900 hover:bg-gray-800 rounded-full border border-gray-700 transition relative">
-                            <Bell className="w-5 h-5 text-yellow-400" />
-                            {notifications.filter(n => !n.is_read).length > 0 && <span className="absolute top-0 right-0 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full animate-pulse">{notifications.filter(n => !n.is_read).length}</span>}
-                        </button>
-                        <AnimatePresence>
-                            {showNotifDropdown && (
-                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-80 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 overflow-hidden">
-                                    <div className="p-3 border-b border-gray-800 font-bold text-sm bg-gray-950 flex justify-between">
-                                        <span>Notifications</span>
-                                        <button onClick={() => setShowNotifDropdown(false)}><X className="w-4 h-4 text-gray-500" /></button>
-                                    </div>
-                                    <div className="max-h-80 overflow-y-auto">
-                                        {notifications.length === 0 ? <p className="p-4 text-gray-500 text-sm text-center">No notifications</p> : (
-                                            notifications.map(n => {
-                                                const isDecided = n.action_status === 'accepted' || n.action_status === 'rejected' || n.action_status === 'voted';
-                                                const isInvite = n.type === 'team_invite' || n.type === 'join_request';
-                                                const isVote = n.type === 'deletion_request' || n.type === 'completion_request';
-
-                                                return (
-                                                    <div key={n._id} className={`p-3 border-b border-gray-800 ${!n.is_read ? 'bg-gray-800/50' : ''}`}>
-                                                        <p className="text-xs text-gray-300 mb-2">{n.message}</p>
-
-                                                        {isInvite && !isDecided && (
-                                                            <div className="flex gap-2 mt-2">
-                                                                <button onClick={() => handleAccept(n)} disabled={processingId === n._id} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{processingId === n._id ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Check className="w-3 h-3" /> Accept</>}</button>
-                                                                <button onClick={() => handleReject(n)} disabled={processingId === n._id} className="flex-1 bg-red-600 hover:bg-red-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1"><X className="w-3 h-3" /> Reject</button>
-                                                            </div>
-                                                        )}
-
-                                                        {isVote && !isDecided && (
-                                                            <div className="flex gap-2 mt-2">
-                                                                <button onClick={() => handleVote(n, 'approve')} disabled={processingId === n._id} className={`flex-1 ${n.type === 'completion_request' ? 'bg-green-600 hover:bg-green-500' : 'bg-red-600 hover:bg-red-500'} text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1`}>
-                                                                    {n.type === 'completion_request' ? <Check className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
-                                                                    {n.type === 'completion_request' ? 'Complete' : 'Delete'}
-                                                                </button>
-                                                                <button onClick={() => handleVote(n, 'reject')} disabled={processingId === n._id} className="flex-1 bg-gray-700 hover:bg-gray-600 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">Reject</button>
-                                                            </div>
-                                                        )}
-
-                                                        {isDecided && (
-                                                            <div className={`text-xs mt-1 font-bold ${n.action_status === 'accepted' ? 'text-green-400' : n.action_status === 'voted' ? 'text-blue-400' : 'text-red-400'}`}>
-                                                                {n.action_status === 'accepted' ? 'Accepted' : n.action_status === 'voted' ? 'Voted' : 'Rejected'}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )
-                                            })
-                                        )}
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
+                {/* Trust Score & Profile */}
+                <div className="flex items-center gap-4 border-l border-zinc-800 pl-6">
+                     <div className="hidden md:flex items-center gap-2 bg-[#1A1D24] px-3 py-1.5 rounded-lg border border-zinc-800/50">
+                        <span className="text-[10px] uppercase text-zinc-500 font-bold tracking-wider">Trust</span>
+                        <span className={`text-sm font-bold ${user.trust_score >= 8 ? 'text-green-400' : 'text-yellow-400'}`}>{user.trust_score.toFixed(1)}</span>
                     </div>
 
-                    <Link href="/chat">
-                        <button className="flex items-center gap-2 bg-gray-900 hover:bg-gray-800 px-4 py-2 rounded-full border border-gray-700 transition relative">
-                            <MessageSquare className="w-4 h-4 text-blue-400" />
-                            <span className="hidden sm:inline">Messages</span>
-                            {unreadCount > 0 && <span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full">{unreadCount}</span>}
-                        </button>
-                    </Link>
-
-                    {/* PROFILE */}
                     <div className="relative" ref={profileRef}>
-                        <button onClick={() => setShowProfileDropdown(!showProfileDropdown)} className="focus:outline-none">
-                            <img src={user.avatar_url || "https://github.com/shadcn.png"} alt="Profile" className="w-10 h-10 rounded-full border border-gray-700 hover:border-gray-500 transition object-cover" />
+                        <button onClick={() => setShowProfileDropdown(!showProfileDropdown)} className="block">
+                            <img src={user.avatar_url || "https://github.com/shadcn.png"} className="w-9 h-9 rounded-full border border-zinc-700 hover:border-zinc-500 transition-all object-cover" />
                         </button>
-                        <AnimatePresence>
-                            {showProfileDropdown && (
-                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 10 }} className="absolute right-0 mt-2 w-56 bg-gray-900 border border-gray-800 rounded-xl shadow-2xl z-50 overflow-hidden">
-                                    <div className="p-4 border-b border-gray-800 flex items-center gap-3 bg-gray-950/50">
-                                        <ShieldCheck className={getScoreColor(user.trust_score) + " h-6 w-6"} />
-                                        <div className="flex flex-col"><span className="text-[10px] text-gray-400 font-mono uppercase tracking-wider">Trust Score</span><span className="font-bold text-lg leading-none text-white">{user.trust_score.toFixed(1)}</span></div>
-                                    </div>
-                                    <div className="p-2">
-                                        <Link href="/profile" onClick={() => setShowProfileDropdown(false)}><div className="p-3 hover:bg-gray-800 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-gray-300 hover:text-white transition mb-1"><UserIcon className="w-4 h-4 text-blue-400" /> My Profile</div></Link>
-                                        
-                                        {/* ADDED SETTINGS LINK */}
-                                        <Link href="/settings" onClick={() => setShowProfileDropdown(false)}>
-                                            <div className="p-3 hover:bg-gray-800 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-gray-300 hover:text-white transition mb-1">
-                                                <Settings className="w-4 h-4 text-purple-400" /> Settings
-                                            </div>
-                                        </Link>
-
-                                        <button onClick={handleLogout} className="w-full text-left p-3 hover:bg-red-900/20 rounded-lg cursor-pointer flex items-center gap-3 text-sm text-red-400 hover:text-red-300 transition"><LogOut className="w-4 h-4" /> Logout</button>
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
+                        {showProfileDropdown && (
+                            <div className="absolute right-0 mt-4 w-48 bg-[#111] border border-zinc-800 rounded-xl shadow-xl z-50 py-1">
+                                <Link href="/profile" className="block px-4 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-900">Profile</Link>
+                                <Link href="/settings" className="block px-4 py-2 text-sm text-zinc-400 hover:text-white hover:bg-zinc-900">Settings</Link>
+                                <button onClick={handleLogout} className="w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-red-900/10">Log Out</button>
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

@@ -1,20 +1,26 @@
 import axios from "axios";
 import Cookies from "js-cookie";
 
-// load from env or default to localhost
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000", // Update with your actual URL
 });
 
-// Automatically add the token to every request
-api.interceptors.request.use((config) => {
-  const token = Cookies.get("token");
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+// REQUEST INTERCEPTOR: Attaches the token to every request automatically
+api.interceptors.request.use(
+  (config) => {
+    // 1. Get the token from cookies
+    const token = Cookies.get("token");
+    
+    // 2. If token exists, add it to the Authorization header
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
   }
-  return config;
-});
+);
 
 export default api;
