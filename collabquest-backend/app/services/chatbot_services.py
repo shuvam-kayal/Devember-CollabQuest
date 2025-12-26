@@ -54,6 +54,10 @@ async def router_node(state: AgentState):
     - TRANSFER_LEADERSHIP (User wants to make someone else the leader, owner, or admin)
     - ASSIGN_TASK (User wants to assign, give, or create a task for someone)
     - EXTEND_DEADLINE (User wants to change, push back, or extend a task deadline)
+    - SHOW_TASKS (User wants to see their assigned tasks, to-do list, or pending work)
+    - DAILY_BRIEFING (User wants a summary of notifications, updates, or what they missed)
+    - ANALYZE_TEAM (User wants to check skill gaps, team composition, or staffing needs)
+    - SEND_MESSAGE (User wants to send a message/notification to a specific member OR the whole team)
     - CODE_REQUEST (User asks for code/debugging)
     - SEARCH_REQUEST (User wants to find/join teams)
     - GENERAL_QUERY (Greetings, platform questions)
@@ -77,7 +81,8 @@ async def router_node(state: AgentState):
         
     # Safety Check
     if intent not in ["CREATE_PROJECT", "DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER",
-                      "TRANSFER_LEADERSHIP", "ASSIGN_TASK", "EXTEND_DEADLINE",
+                      "TRANSFER_LEADERSHIP", "ASSIGN_TASK", "EXTEND_DEADLINE", "SHOW_TASKS",
+                      "DAILY_BRIEFING", "ANALYZE_TEAM", "SEND_MESSAGE",
                       "CODE_REQUEST", "SEARCH_REQUEST", "GENERAL_QUERY"]:
         intent = "GENERAL_QUERY"
         
@@ -120,14 +125,16 @@ async def planner_node(state: AgentState):
     return {"final_response": response}
 
 async def manager_node(state: AgentState):
-    """Handles Project Management (Delete, Complete, Leave, Remove, Transfer, Assign, Extend)."""
+    """Handles Project Management (All Actions)."""
     print("👔 Manager Node Active")
     user_id = state["user_id"]
     intent = state["intent"]
     
-    # 1. Fetch relevant projects
-    # ✅ LOGIC UPDATE: LEAVE and EXTEND require membership. Others require Leadership.
-    if intent in ["LEAVE_TEAM", "EXTEND_DEADLINE"]:
+  # 1. Fetch relevant projects
+    # Members can access these features. Leaders can do everything.
+    member_allowed = ["LEAVE_TEAM", "EXTEND_DEADLINE", "SHOW_TASKS", "ANALYZE_TEAM", "DAILY_BRIEFING"]
+    
+    if intent in member_allowed:
         relevant_teams = await Team.find(Team.members == user_id).to_list()
         error_msg = "You are not part of any teams right now."
     else:
@@ -136,7 +143,51 @@ async def manager_node(state: AgentState):
 
     if not relevant_teams:
         return {"final_response": error_msg}
+    
+            # --- BRANCH I: SHOW MY TASKS ---
+    if intent == "SHOW_TASKS":
+        my_tasks = []
+        
+        # 1. Loop through ALL teams the user is in
+        for team in relevant_teams:
+            for task in team.tasks:
+                # Check if assigned to user (and optionally if not completed)
+                if task.assignee_id == user_id:
+                    # Format: "Task Name (Project Name) - Due: Date"
+                    due_date = task.deadline.strftime('%Y-%m-%d')
+                    my_tasks.append(f"• **{task.description}** (in *{team.name}*) — 📅 Due {due_date}")
 
+        if not my_tasks:
+            return {"final_response": "🎉 **You're all caught up!** You have no pending tasks assigned to you."}
+        
+        formatted_list = "\n".join(my_tasks)
+        return {"final_response": f"📋 **Your To-Do List:**\n\n{formatted_list}"}
+
+    if intent == "DAILY_BRIEFING":
+        # Fetch last 10 notifications for user
+        notifs = await Notification.find(Notification.recipient_id == user_id).sort("-timestamp").limit(10).to_list()
+        
+        if not notifs:
+            return {"final_response": "📭 **No new updates.** You are all caught up!"}
+        
+        # Format for AI
+        notif_text = "\n".join([f"- {n.message} ({n.timestamp.strftime('%Y-%m-%d %H:%M')})" for n in notifs])
+        
+        summary_prompt = f"""
+        User ID: {user_id}
+        Summarize these notifications into a natural, friendly paragraph (Briefing style).
+        Group related items.
+        
+        Notifications:
+        {notif_text}
+        """
+        try:
+            completion = await client.chat.completions.create(model=MENTOR_MODEL, messages=[{"role": "user", "content": summary_prompt}])
+            summary = completion.choices[0].message.content
+            return {"final_response": f"🗞️ **Daily Briefing:**\n\n{summary}"}
+        except:
+             return {"final_response": "I couldn't summarize your notifications right now."}
+        
     # 2. Identify Target Project
     team_names = [t.name for t in relevant_teams]
     project_prompt = f"""
@@ -169,10 +220,16 @@ async def manager_node(state: AgentState):
             action_instruction = "Leave [Project Name]"
         elif intent == "REMOVE_MEMBER":                                 
             action_instruction = "Remove [Member Name] from [Project Name]"
+        elif intent == "TRANSFER_LEADERSHIP": 
+            action_instruction = "Make [Member Name] leader of [Project Name]"
         elif intent == "ASSIGN_TASK": 
             action_instruction = "Assign task in [Project Name]"
         elif intent == "EXTEND_DEADLINE": 
             action_instruction = "Extend deadline of [Task] in [Project Name]"
+        elif intent == "ANALYZE_TEAM": 
+            action_instruction = "Analyze team [Project Name]"
+        elif intent == "SEND_MESSAGE": 
+            action_instruction = "Tell [Name] in [Project Name] to [Message]"
         else:
             action_instruction = "Manage [Project Name]"
 
@@ -561,8 +618,86 @@ async def manager_node(state: AgentState):
             
             return {"final_response": f"🗳️ **Vote Started.** You requested {days} extra days. Team members have been notified to vote."}
 
-    return {"final_response": "I'm not sure what management action you wanted to take."}
+    if intent == "SEND_MESSAGE":
+        # 1. Permission Check (Leader Only)
+        if target_team.members[0] != user_id:
+             return {"final_response": "❌ Only the **Team Leader** can send notifications to the team."}
 
+        # 2. Get Members for Prompt
+        members_map = []
+        for m_id in target_team.members:
+            u = await User.get(m_id)
+            if u: members_map.append(f"{u.username} (ID: {str(u.id)})")
+
+        # 3. AI Extraction
+        extraction_prompt = f"""
+        User Input: "{state['question']}"
+        Current Project Context: "{target_team.name}"
+        Team Members: {', '.join(members_map)}
+        
+        Task: Identify the recipient and the message.
+        - The user might mention the project (e.g., "in {target_team.name}"), IGNORE that in the message text.
+        - If sending to everyone/team/all -> recipient_id = "ALL"
+        - If sending to one person -> recipient_id = "Specific ID from list"
+        
+        Return JSON: {{ "recipient_id": "...", "message": "..." }}
+        """
+        try:
+            completion = await client.chat.completions.create(model=MENTOR_MODEL, messages=[{"role": "user", "content": extraction_prompt}])
+            clean_json = completion.choices[0].message.content.replace("```json", "").replace("```", "").strip()
+            data = json.loads(clean_json)
+            recipient_id = data.get("recipient_id")
+            message_text = data.get("message")
+        except: 
+            return {"final_response": "I couldn't figure out who to message. Try 'Tell John to...' or 'Tell everyone...'"}
+
+        # 4. Logic
+        if recipient_id == "ALL":
+            # Broadcast to Everyone
+            count = 0
+            for m_id in target_team.members:
+                if m_id != user_id:
+                    await Notification(recipient_id=m_id, sender_id=user_id, message=f"📢 **Announcement:** {message_text}", type="info", related_id=str(target_team.id)).insert()
+                    count += 1
+            return {"final_response": f"📢 **Broadcast Sent.** Notified {count} members: *\"{message_text}\"*"}
+        
+        else:
+            # Send to One Person
+            if recipient_id not in target_team.members:
+                 return {"final_response": "❌ That user is not in this team."}
+            
+            await Notification(recipient_id=recipient_id, sender_id=user_id, message=f"📩 **Message from Leader:** {message_text}", type="info", related_id=str(target_team.id)).insert()
+            return {"final_response": f"📩 **Message Sent.** Sent to <@{recipient_id}>: *\"{message_text}\"*"}
+
+    if intent == "ANALYZE_TEAM":
+        needed = set([s.lower() for s in target_team.needed_skills])
+        member_skills = set()
+        roster = []
+        
+        for m_id in target_team.members:
+            u = await User.get(m_id)
+            if u:
+                u_skills = [s.lower() for s in u.skills]
+                member_skills.update(u_skills)
+                roster.append(f"{u.username} ({', '.join(u.skills)})")
+        
+        missing = [s.capitalize() for s in needed if s not in member_skills]
+        covered = [s.capitalize() for s in needed if s in member_skills]
+        
+        analysis_prompt = f"""
+        Project: {target_team.name}
+        Required Skills: {', '.join(target_team.needed_skills)}
+        Current Roster: {'; '.join(roster)}
+        Missing Skills: {', '.join(missing)}
+        Write a short, professional analysis. Advise on recruiting for missing skills.
+        """
+        try:
+            completion = await client.chat.completions.create(model=MENTOR_MODEL, messages=[{"role": "user", "content": analysis_prompt}])
+            advice = completion.choices[0].message.content
+            return {"final_response": f"📊 **Team Analysis for {target_team.name}**\n\n✅ **Covered:** {', '.join(covered)}\n❌ **Missing:** {', '.join(missing) if missing else 'None'}\n\n💡 **Insight:**\n{advice}"}
+        except: return {"final_response": "Analysis failed."}
+
+    return {"final_response": "I'm not sure what management action you wanted to take."}
 
 async def coder_node(state: AgentState):
     """Handles Coding Requests with Context."""
@@ -587,27 +722,46 @@ async def coder_node(state: AgentState):
         return {"final_response": "I'm having trouble generating code right now."}
 
 async def search_node(state: AgentState):
-    """Handles Vector Search."""
+    """Handles Vector Search (Projects Only)."""
     print("🔍 Search Node Active")
     
-    # 1. Decide Filter
+    # 1. PRIVACY GUARD: Block "Member Search" requests
+    # If the user explicitly asks for people/users, we block it to protect privacy.
+    recruit_keywords = [
+        "find member", "find developer", "recruit", "suggest candidate", 
+        "looking for people", "find user", "search user", "show profile"
+    ]
+    
+    if any(k in state["question"].lower() for k in recruit_keywords):
+        return {
+            "final_response": "🚫 **I cannot search for Members directly.**\n\nTo find teammates or developers, please use the **Recruit / Swipe Matching** feature on your Dashboard.\n\nI can only help you find **Projects** to join!"
+        }
+
+    # 2. FORCE FILTER TO 'TEAM'
+    # Even if they didn't use a blocked keyword, we force the DB search to ONLY look at projects.
+    # We never allow 'filter_type="user"' to run.
     filter_type = "team"
-    if any(k in state["question"].lower() for k in ["developer", "member", "user"]):
-        filter_type = "user"
         
-    # 2. Search (Run synchronous function in thread)
+    # 3. Perform the Search
+    # This finds projects matching the user's query (e.g., "React game", "Python AI")
     query = f"{state['question']} {', '.join(state['user_skills'])}"
     matches = await asyncio.to_thread(search_vectors, query, filter_type)
     
     if not matches:
-        return {"final_response": "I couldn't find any matching teams or members right now."}
+        return {"final_response": "I couldn't find any matching projects right now."}
         
-    # 3. Summarize Matches
+    # 4. Generate Recommendation
     context = "\n\n".join(matches)
     prompt = f"""
-    Recommend the best fit from these matches for the request: "{state['question']}"
+    Recommend the best fit from these PROJECT matches for the request: "{state['question']}"
+    
     Matches:
     {context}
+    
+    Instructions:
+    - Only recommend the projects listed above.
+    - Focus on the Tech Stack and Description.
+    - Do NOT mention specific user names or member details.
     """
     
     completion = await client.chat.completions.create(
@@ -714,7 +868,7 @@ workflow.set_entry_point("router")
 def route_decision(state):
     i = state["intent"]
     if i == "CREATE_PROJECT": return "planner"
-    if i in ["DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER", "TRANSFER_LEADERSHIP", "ASSIGN_TASK", "EXTEND_DEADLINE"]: return "manager"
+    if i in ["DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER", "TRANSFER_LEADERSHIP", "ASSIGN_TASK", "EXTEND_DEADLINE", "SHOW_TASKS", "SEND_MESSAGE", "DAILY_BRIEFING", "ANALYZE_TEAM"]: return "manager"
     if i == "CODE_REQUEST": return "coder"
     if i == "SEARCH_REQUEST": return "searcher"
     return "chatter"
