@@ -196,13 +196,14 @@ export default function OnboardingTutorial() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             style={{
-              background:
-                highlightPos &&
-                `radial-gradient(
-                  circle ${Math.max(highlightPos.width, highlightPos.height) / 2 + 40}px at ${highlightPos.x + highlightPos.width / 2}px ${highlightPos.y + highlightPos.height / 2}px,
-                  transparent 0%,
-                  rgba(0, 0, 0, 0.85) 100%
-                )`,
+              background: highlightPos
+                ? `radial-gradient(circle ${Math.max(
+                    highlightPos.width,
+                    highlightPos.height
+                  ) / 2 + 40}px at ${highlightPos.x +
+                    highlightPos.width / 2}px ${highlightPos.y +
+                    highlightPos.height / 2}px, transparent 0%, rgba(0, 0, 0, 0.85) 100%)`
+                : "rgba(0, 0, 0, 0.85)",
             }}
             transition={{ duration: 0.3 }}
           />
@@ -223,7 +224,7 @@ export default function OnboardingTutorial() {
             {/* Header */}
             <div className="relative h-2 bg-slate-700 rounded-t-xl overflow-hidden">
               <motion.div
-                initial={{ width: 0 }}
+                initial={{ width: "0%" }}
                 animate={{ width: `${progress}%` }}
                 transition={{ duration: 0.3 }}
                 className="h-full bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500"
@@ -258,9 +259,9 @@ export default function OnboardingTutorial() {
 
               {/* Step Indicator */}
               <div className="flex justify-center gap-2 my-6">
-                {steps.map((_, index) => (
+                {steps.map((s, index) => (
                   <motion.div
-                    key={index}
+                    key={s.id}
                     className={`h-2 rounded-full transition-all ${
                       index === currentStep
                         ? "bg-blue-500 w-6"
