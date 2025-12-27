@@ -1,10 +1,11 @@
-
 "use client";
 
 import Link from "next/link";
 import { Github, Mail, Lock, ArrowRight, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Cookies from "js-cookie";
+import api from "@/lib/api"; // Ensure you have this file created as discussed
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,28 +14,32 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Define this ONCE.
+  // Now you don't have to type process.env... repeatedly in your JSX.
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/auth/login/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
+      // using 'api' instance automatically handles the base URL
+      const response = await api.post("/auth/login/email", { 
+        email, 
+        password 
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.detail || "Invalid credentials");
-        return;
-      }
-
-      localStorage.setItem("token", data.token);
+      const data = response.data;
+      
+      // Store token
+      Cookies.set("token", data.token); 
+      
       router.push("/dashboard");
-    } catch (err) {
-      setError("Server connection failed.");
+    } catch (err: any) {
+      console.error("Login failed", err);
+      // specific error message from backend or fallback
+      setError(err.response?.data?.detail || "Invalid credentials.");
     } finally {
       setLoading(false);
     }
@@ -44,20 +49,11 @@ export default function LoginPage() {
     <main className="relative min-h-screen flex items-center justify-center bg-[#050505] text-white overflow-hidden font-sans">
       {/* 1. Catchy Background Elements */}
       <div className="absolute inset-0 z-0">
-        {/* Deep Purple Glow */}
         <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-purple-900/30 blur-[120px] animate-pulse" />
-        
-        {/* Soft Blue/Indigo Glow */}
         <div className="absolute bottom-[10%] right-[-5%] w-[40%] h-[40%] rounded-full bg-indigo-900/20 blur-[100px]" />
-        
-        {/* Moving Mesh Accent */}
         <div className="absolute top-[20%] right-[20%] w-[30%] h-[30%] rounded-full bg-fuchsia-900/10 blur-[80px] animate-bounce [animation-duration:10s]" />
-        
-        {/* Subtle Grid Overlay for "Quest" feel */}
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-50 contrast-150" />
       </div>
-      <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-purple-900/20 rounded-full blur-[120px] animate-pulse" />
-      <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-indigo-900/20 rounded-full blur-[120px]" />
 
       {/* 2. Glassmorphism Card */}
       <div className="relative z-10 w-full max-w-md p-8 mx-4 bg-gray-900/40 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
@@ -69,17 +65,17 @@ export default function LoginPage() {
           <p className="text-gray-400 mt-2">Resume your journey and conquer the day.</p>
         </div>
 
-        {/* 3. Social Login Buttons */}
+        {/* 3. Dynamic Social Login Buttons */}
         <div className="grid grid-cols-2 gap-4 mb-8">
           <a
-            href="http://localhost:8000/auth/login/github"
+            href={`${API_BASE_URL}/auth/login/github`}
             className="flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all duration-200"
           >
             <Github className="h-5 w-5" />
             <span className="text-sm font-medium">GitHub</span>
           </a>
           <a
-            href="http://localhost:8000/auth/login/google"
+            href={`${API_BASE_URL}/auth/login/google`}
             className="flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl transition-all duration-200"
           >
             <svg className="h-5 w-5" viewBox="0 0 24 24">
@@ -97,7 +93,7 @@ export default function LoginPage() {
           <span className="relative bg-transparent px-4 text-xs text-gray-500 uppercase tracking-widest">Or login with email</span>
         </div>
 
-        {/* 4. Catchy Form Inputs */}
+        {/* 4. Form Inputs */}
         <form onSubmit={handleEmailLogin} className="space-y-5">
           <div className="relative group">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500 group-focus-within:text-purple-500 transition-colors" />

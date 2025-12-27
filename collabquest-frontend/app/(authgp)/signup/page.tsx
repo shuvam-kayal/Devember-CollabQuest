@@ -3,7 +3,9 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { Github, UserPlus, ArrowRight } from "lucide-react";
+import { Github, ArrowRight } from "lucide-react";
+import Cookies from "js-cookie";
+import api from "@/lib/api"; // Your configured axios instance
 
 export default function SignupPage() {
   const router = useRouter();
@@ -13,29 +15,32 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Define Base URL once for the OAuth link
+  const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   const handleEmailRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/auth/register/email", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, username, password }),
+      // Use api instance (automatically handles Base URL)
+      const response = await api.post("/auth/register/email", { 
+        email, 
+        username, 
+        password 
       });
 
-      const data = await response.json();
+      const data = response.data;
 
-      if (!response.ok) {
-        setError(data.detail || "Registration failed");
-        return;
-      }
-
-      localStorage.setItem("token", data.token);
+      // Store token in Cookies (matching your Login page logic)
+      Cookies.set("token", data.token);
+      
       router.push("/dashboard");
-    } catch (err) {
-      setError("An error occurred. Try again.");
+    } catch (err: any) {
+      console.error("Registration failed", err);
+      // specific error message from backend or fallback
+      setError(err.response?.data?.detail || "Registration failed. Try again.");
     } finally {
       setLoading(false);
     }
@@ -59,7 +64,7 @@ export default function SignupPage() {
             </div>
             <div className="flex items-center gap-4 text-gray-300">
               <div className="h-8 w-8 rounded-full bg-purple-600/20 flex items-center justify-center text-purple-400">✓</div>
-              <span>Prject Markeplaces</span>
+              <span>Project Marketplaces</span>
             </div>
           </div>
         </div>
@@ -134,7 +139,7 @@ export default function SignupPage() {
           </div>
 
           <a
-            href="http://localhost:8000/auth/login/github"
+            href={`${API_BASE_URL}/auth/login/github`}
             className="flex items-center justify-center gap-3 w-full px-6 py-3 bg-white text-black rounded-lg font-bold hover:bg-gray-200 transition"
           >
             <Github className="h-5 w-5" />
