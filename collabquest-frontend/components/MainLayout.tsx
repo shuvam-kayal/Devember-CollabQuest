@@ -2,6 +2,7 @@
 import { useState } from "react";
 import Sidebar from "./Sidebar";
 import GlobalHeader from "./GlobalHeader"; // Uses your existing file
+import OnboardingTutorial from "./OnboardingTutorial";
 
 export default function MainLayout({ children }: { children: React.ReactNode }) {
   // Shared state for collapsing sidebar
@@ -27,6 +28,9 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
           {children}
         </main>
       </div>
+
+      {/* 5. Onboarding Tutorial */}
+      <OnboardingTutorial />
     </div>
   );
 }

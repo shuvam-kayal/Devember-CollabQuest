@@ -139,6 +139,7 @@ class User(Document):
     accepted_chat_requests: List[str] = []
     favorites: List[str] = [] 
     embedding: List[float] = [] 
+    is_onboarded: bool = Field(default=False)
     
     class Settings: name = "users"
 

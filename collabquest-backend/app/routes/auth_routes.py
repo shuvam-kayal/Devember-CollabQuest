@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from app.auth.utils import (
@@ -8,6 +8,7 @@ from app.auth.utils import (
 )
 from app.models import User, TrustBreakdown
 from app.database import init_db
+from app.auth.dependencies import get_current_user
 
 router = APIRouter()
 
@@ -218,3 +219,29 @@ async def google_callback(code: str):
     jwt_token = create_access_token({"sub": str(user.id)})
     
     return RedirectResponse(f"http://localhost:3000/dashboard?token={jwt_token}")
+
+# --- ONBOARDING ENDPOINTS ---
+
+@router.get("/profile")
+async def get_user_profile(current_user: User = Depends(get_current_user)):
+    """
+    Get current user's profile information
+    """
+    return {
+        "id": str(current_user.id),
+        "username": current_user.username,
+        "email": current_user.email,
+        "avatar_url": current_user.avatar_url,
+        "is_onboarded": current_user.is_onboarded,
+        "trust_score": current_user.trust_score,
+        "is_verified_student": current_user.is_verified_student
+    }
+
+@router.post("/complete-onboarding")
+async def complete_onboarding(current_user: User = Depends(get_current_user)):
+    """
+    Mark user as onboarded
+    """
+    current_user.is_onboarded = True
+    await current_user.save()
+    return {"success": True, "message": "Onboarding completed"}
