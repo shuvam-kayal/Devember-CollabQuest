@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react"; // <--- 1. Added Suspense
 import { useSearchParams, useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
@@ -191,8 +191,9 @@ function GlobalActiveTasks() {
     );
 }
 
-/* -------------------- MAIN DASHBOARD PAGE -------------------- */
-export default function Dashboard() {
+/* -------------------- MAIN DASHBOARD PAGE (Renamed Content) -------------------- */
+// 2. Renamed to DashboardContent
+function DashboardContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
 
@@ -452,5 +453,14 @@ export default function Dashboard() {
                 )}
             </AnimatePresence>
         </div>
+    );
+}
+
+// 3. Added the Wrapper Export with Suspense
+export default function Dashboard() {
+    return (
+        <Suspense fallback={<div className="flex h-screen items-center justify-center"><Loader2 className="animate-spin text-purple-500" /></div>}>
+            <DashboardContent />
+        </Suspense>
     );
 }

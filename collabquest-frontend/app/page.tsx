@@ -14,13 +14,18 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
+  // Define the API URL once here. 
+  // It checks for the environment variable first, then falls back to localhost.
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
   const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/auth/login/email", {
+      // UPDATED: Using API_URL variable
+      const response = await fetch(`${API_URL}/auth/login/email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, password }),
@@ -49,7 +54,8 @@ export default function Home() {
     setLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/auth/register/email", {
+      // UPDATED: Using API_URL variable
+      const response = await fetch(`${API_URL}/auth/register/email`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email, username, password }),
@@ -104,12 +110,8 @@ export default function Home() {
           Collab<span className="text-purple-500">Quest</span>
         </h1>
         <p className="text-xl md:text-2xl text-gray-200 max-w-2xl text-center font-medium">
-
           No more ghosting. Match with verified student collaborators based on skills, reliability, and code quality.
-
         </p>
-
-        
         
       </div>
     </main>

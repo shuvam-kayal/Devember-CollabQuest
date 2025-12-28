@@ -1,13 +1,27 @@
-// app/layout.tsx
-import "./globals.css";
-// import { Toaster } from 'sonner'; // Example
+import type { Metadata } from "next";
+import { Inter } from "next/font/google"; // Or your preferred font
+import "./globals.css"; // Your global styles
+import SelectionTTS from "@/components/SelectionTTS"; // Using @/ is safer for paths
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+const inter = Inter({ subsets: ["latin"] });
+
+export const metadata: Metadata = {
+  title: "CollabQuest",
+  description: "Find your team.",
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
     <html lang="en">
-      <body className="bg-[#0B0E14] text-white">
+      <body className={inter.className}>
+        {/* TTS Listener acts globally here */}
+        <SelectionTTS />
+        
         {children}
-        {/* <Toaster /> */}
       </body>
     </html>
   );

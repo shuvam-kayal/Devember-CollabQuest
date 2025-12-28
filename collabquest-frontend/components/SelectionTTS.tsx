@@ -3,26 +3,24 @@
 import { useEffect, useRef, useState } from "react";
 
 export default function SelectionTTS() {
-  // Start with a deterministic value to avoid SSR/client hydration mismatch.
   const [enabled, setEnabled] = useState<boolean>(false);
+  const initializedRef = useRef<boolean>(false);
+  const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
 
-  // Sync from localStorage after mount.
+  // 1. Sync from localStorage on mount
   useEffect(() => {
     try {
       const v = localStorage.getItem("ttsEnabled");
       if (v === "true") setEnabled(true);
+      // Mark as initialized so we don't overwrite storage immediately
+      initializedRef.current = true;
     } catch {}
   }, []);
 
-  // track whether we've synced initial value from storage to avoid
-  // writing the default `false` back over an existing `true` value.
-  const initializedRef = useRef<boolean>(false);
-
-  const utterRef = useRef<SpeechSynthesisUtterance | null>(null);
-
+  // 2. Sync state BACK to localStorage (only after initialization)
   useEffect(() => {
+    if (!initializedRef.current) return;
     try {
-      if (!initializedRef.current) return;
       localStorage.setItem("ttsEnabled", enabled ? "true" : "false");
     } catch {}
   }, [enabled]);
@@ -32,95 +30,87 @@ export default function SelectionTTS() {
 
     const speakSelection = () => {
       if (!enabled) return;
-      if (typeof window === "undefined" || !window.getSelection) return;
-      const selection = window.getSelection();
-      const text = selection ? selection.toString().trim() : "";
-      if (!text) return;
+      
+      // Small timeout allows the selection to finalize in the browser DOM
+      setTimeout(() => {
+          const selection = window.getSelection();
+          const text = selection ? selection.toString().trim() : "";
+          if (!text) return;
 
-      // cancel any existing speech
-      if (typeof window !== "undefined" && window.speechSynthesis) {
-        try {
-          if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
-        } catch {}
-      }
+          // Cancel existing speech
+          if (window.speechSynthesis.speaking) {
+            window.speechSynthesis.cancel();
+          }
 
-      try {
-        const utter = new SpeechSynthesisUtterance(text);
-        utterRef.current = utter;
-        if (typeof window !== "undefined" && window.speechSynthesis) {
-          window.speechSynthesis.speak(utter);
-        }
-      } catch (e) {
-        // ignore
-      }
+          try {
+            const utter = new SpeechSynthesisUtterance(text);
+            utterRef.current = utter;
+            window.speechSynthesis.speak(utter);
+          } catch (e) {
+            console.error("TTS Error:", e);
+          }
+      }, 10);
     };
 
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        if (typeof window !== "undefined" && window.speechSynthesis) {
-          try {
-            if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
-          } catch {}
-        }
+         if (window.speechSynthesis.speaking) window.speechSynthesis.cancel();
       }
     };
 
-    // react to storage changes from settings page in other tabs
+    // Listen for storage changes (other tabs)
     const onStorage = (ev: StorageEvent) => {
       if (ev.key === "ttsEnabled") {
         setEnabled(ev.newValue === "true");
-        initializedRef.current = true;
       }
     };
 
-    // react to in-window custom events (fired by settings page)
+    // Listen for custom events (SettingsPage in same tab)
     const onCustom = (ev: Event) => {
-      try {
-        const custom = ev as CustomEvent<boolean>;
-        if (typeof custom.detail === "boolean") {
-          setEnabled(custom.detail);
-          initializedRef.current = true;
-        }
-      } catch {}
+      const custom = ev as CustomEvent<boolean>;
+      if (typeof custom.detail === "boolean") {
+        setEnabled(custom.detail);
+      }
     };
 
+    // EVENT LISTENERS
+    // Removed 'selectionchange' to prevent stuttering
     document.addEventListener("mouseup", speakSelection);
-    document.addEventListener("pointerup", speakSelection);
     document.addEventListener("touchend", speakSelection);
-    document.addEventListener("selectionchange", speakSelection);
     document.addEventListener("keyup", onKey);
     window.addEventListener("storage", onStorage);
     window.addEventListener("ttsChanged", onCustom as EventListener);
 
     return () => {
       document.removeEventListener("mouseup", speakSelection);
-      document.removeEventListener("pointerup", speakSelection);
       document.removeEventListener("touchend", speakSelection);
-      document.removeEventListener("selectionchange", speakSelection);
       document.removeEventListener("keyup", onKey);
       window.removeEventListener("storage", onStorage);
       window.removeEventListener("ttsChanged", onCustom as EventListener);
+      // Cleanup audio on unmount
+      if (typeof window !== "undefined") window.speechSynthesis.cancel();
     };
   }, [enabled]);
 
-  // This component has no visible UI; it exposes a small floating indicator when enabled.
+  // Indicator UI
+  if (!enabled) return null;
+
   return (
-    <div aria-hidden style={{ position: "fixed", right: 12, bottom: 12 }}>
-      {enabled ? (
-        <div
-          title="Text-to-Speech enabled: select text to hear it"
-          style={{
-            background: "#0f172a",
-            color: "#fff",
-            padding: "6px 10px",
-            borderRadius: 8,
-            fontSize: 12,
-            boxShadow: "0 2px 8px rgba(2,6,23,0.4)",
-          }}
-        >
-          TTS: On
-        </div>
-      ) : null}
+    <div aria-hidden style={{ position: "fixed", right: 12, bottom: 12, zIndex: 9999 }}>
+      <div
+        title="Text-to-Speech enabled: select text to hear it"
+        style={{
+          background: "#0f172a",
+          color: "#fff",
+          padding: "6px 10px",
+          borderRadius: 8,
+          fontSize: 12,
+          boxShadow: "0 2px 8px rgba(2,6,23,0.4)",
+          border: "1px solid #1e293b"
+        }}
+      >
+        TTS: On
+      </div>
     </div>
   );
 }

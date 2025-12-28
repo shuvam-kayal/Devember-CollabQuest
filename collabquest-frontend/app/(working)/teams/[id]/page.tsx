@@ -254,16 +254,65 @@ export default function TeamDetails() {
     const saveSkills = async () => { try { await api.put(`/teams/${teamId}/skills`, { needed_skills: localSkills }); fetchTeamData(); setIsEditingSkills(false); setSuggestions(null); } catch (err) { } };
 
     const askAiForStack = async () => {
-        setIsSuggesting(true); setSuggestions(null);
+        // 1. FRONTEND VALIDATION
+        const descToCheck = team?.description || "";
+        
+        if (!descToCheck.trim()) {
+            alert("⚠️ Missing Description\nPlease add a project description so the AI knows what to suggest.");
+            return;
+        }
+
+        // 2. API CALL
+        setIsSuggesting(true); 
+        setSuggestions(null);
         try {
-            const res = await api.post("/teams/suggest-stack", { description: team?.description || "", current_skills: localSkills });
-            if (res.data && (res.data.add.length > 0 || res.data.remove.length > 0)) setSuggestions(res.data);
-        } catch (err) { console.error(err); } finally { setIsSuggesting(false); }
+            const res = await api.post("/teams/suggest-stack", { 
+                description: descToCheck, 
+                current_skills: localSkills 
+            });
+            if (res.data && (res.data.add.length > 0 || res.data.remove.length > 0)) {
+                setSuggestions(res.data);
+            }
+        } catch (err: any) { 
+            // 3. BACKEND VALIDATION HANDLER
+            // We get the specific error message from the backend (e.g., "Description is too vague")
+            const msg = err.response?.data?.detail || "AI Suggestion failed.";
+            alert(msg);
+            
+            // REMOVED: console.error(err); 
+            // This prevents the "Request failed with status code 400" from cluttering your console.
+        } finally { 
+            setIsSuggesting(false); 
+        }
     };
 
     const acceptSuggestion = (type: 'add' | 'remove', skill: string) => { if (type === 'add') addSkill(skill); if (type === 'remove') removeSkill(skill); if (suggestions) setSuggestions({ ...suggestions, [type]: suggestions[type].filter(s => s !== skill) }); };
-    const generateRoadmap = async () => { setIsGenerating(true); try { await api.post(`/teams/${teamId}/roadmap`, {}); fetchTeamData(); } catch (err) { } finally { setIsGenerating(false); } };
 
+    const generateRoadmap = async () => {
+        // 1. VALIDATION
+        if (!team?.description?.trim()) {
+            alert("⚠️ Missing Description\nPlease add a detailed project description to generate a roadmap.");
+            return; // Stops the request
+        }
+        if (!team?.needed_skills || team.needed_skills.length === 0) {
+            alert("⚠️ Missing Tech Stack\nPlease add at least one skill/tool to your Tech Stack first.");
+            return; // Stops the request
+        }
+
+        // 2. API CALL
+        setIsGenerating(true);
+        try {
+            await api.post(`/teams/${teamId}/roadmap`, {});
+            fetchTeamData();
+        } catch (err: any) {
+            // Show backend error if AI fails (e.g., "Irrelevant description")
+            const msg = err.response?.data?.detail || "Roadmap generation failed.";
+            alert(msg);
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+    
     if (loading || !team) return <div className="flex h-screen items-center justify-center bg-transparent text-white"><Loader2 className="w-10 h-10 animate-spin text-purple-600" /></div>;
 
     // Helper for task status visualization
