@@ -1,18 +1,21 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
-import { useSearchParams, useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    ShieldCheck, Loader2, Edit2, X, Plus,
-    MessageSquare, UserCheck, Bell, CheckCircle,
-    Briefcase, UserPlus, Send, Code2, Mail, Clock, Search, XCircle, RotateCcw, Check, Trash2,
-    Calendar, ArrowRight, Layout, Award, Star
+    Loader2, Edit2, X, Plus,
+    MessageSquare, CheckCircle,
+    Briefcase, Send, Code2, Mail, Clock, XCircle, RotateCcw, Check, Trash2,
+    Calendar, Layout, Award, Star,
+    // Sidebar specific icons
+    ChevronLeft, ChevronRight, LayoutDashboard, Users, Settings, LogOut
 } from "lucide-react";
 import Link from "next/link";
 import GlobalHeader from "@/components/GlobalHeader";
 
+/* -------------------- INTERFACES -------------------- */
 interface UserProfile {
     username: string;
     avatar_url: string;
@@ -56,83 +59,119 @@ interface TaskItem {
     project_name: string;
 }
 
-export default function Dashboard() {
+/* -------------------- HELPER COMPONENT: SIDEBAR LINK -------------------- */
+const SidebarLink = ({ 
+    icon: Icon, 
+    label, 
+    isCollapsed, 
+    active, 
+    onClick, 
+    id 
+}: { 
+    icon: any, 
+    label: string, 
+    isCollapsed: boolean, 
+    active: boolean, 
+    onClick: () => void, 
+    id?: string 
+}) => (
+    <div 
+        id={id}
+        onClick={onClick}
+        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 cursor-pointer group mb-1
+        ${active 
+            ? "bg-purple-600/10 text-purple-400 border border-purple-500/20" 
+            : "text-gray-400 hover:bg-white/5 hover:text-white hover:border hover:border-white/5 border border-transparent"
+        }`}
+    >
+        <Icon className={`w-5 h-5 shrink-0 ${active ? "text-purple-400" : "text-gray-500 group-hover:text-white"}`} />
+        
+        {!isCollapsed && (
+            <span className="font-medium text-sm whitespace-nowrap overflow-hidden transition-all">
+                {label}
+            </span>
+        )}
+        
+        {active && !isCollapsed && (
+            <motion.div layoutId="active-pill" className="ml-auto w-1.5 h-1.5 rounded-full bg-purple-400" />
+        )}
+    </div>
+);
+
+/* -------------------- MAIN CONTENT COMPONENT -------------------- */
+function DashboardContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
-    const [user, setUser] = useState<UserProfile | null>(null);
+    const pathname = usePathname();
 
-    const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
-    const [myProjects, setMyProjects] = useState<Team[]>([]);
-    
-    // New Feature State
-    const [activeTasks, setActiveTasks] = useState<TaskItem[]>([]);
-    const [historyTasks, setHistoryTasks] = useState<TaskItem[]>([]);
-    const [completedProjects, setCompletedProjects] = useState<Team[]>([]);
-    const [favorites, setFavorites] = useState<Team[]>([]); // <--- NEW
-    const [tasksLoading, setTasksLoading] = useState(true);
-
+    // --- UI STATES ---
+    const [isCollapsed, setIsCollapsed] = useState(false); 
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [showEmailModal, setShowEmailModal] = useState(false);
+
+    // --- DATA STATES ---
+    const [user, setUser] = useState<UserProfile | null>(null);
+    const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
+    
+    // Feature State
+    const [activeTasks, setActiveTasks] = useState<TaskItem[]>([]);
+    const [historyTasks, setHistoryTasks] = useState<TaskItem[]>([]);
+    const [tasksLoading, setTasksLoading] = useState(true);
+
+    // --- FORM STATES ---
     const [emailRecipient, setEmailRecipient] = useState<{ id: string, name: string } | null>(null);
     const [emailSubject, setEmailSubject] = useState("");
     const [emailBody, setEmailBody] = useState("");
 
+    // --- INITIALIZATION ---
     useEffect(() => {
         const urlToken = searchParams.get("token");
         let activeToken = urlToken;
-        if (urlToken) { Cookies.set("token", urlToken, { expires: 7 }); router.replace("/dashboard"); }
-        else { activeToken = Cookies.get("token") || null; if (!activeToken) { router.push("/"); return; } }
+        
+        if (urlToken) { 
+            Cookies.set("token", urlToken, { expires: 7 }); 
+            router.replace("/dashboard"); 
+        } else { 
+            activeToken = Cookies.get("token") || null; 
+            if (!activeToken) { 
+                router.push("/"); 
+                return; 
+            } 
+        }
+        
         if (activeToken) {
             fetchUserProfile(activeToken);
             fetchMatches(activeToken);
-            fetchMyProjects(activeToken);
             fetchDashboardData(activeToken);
         }
 
-        // Sync with Header Actions
         const handleSync = () => {
-            if (activeToken) {
-                fetchMatches(activeToken);
-                fetchMyProjects(activeToken);
-                fetchDashboardData(activeToken);
+            const token = Cookies.get("token");
+            if (token) {
+                fetchMatches(token);
+                fetchDashboardData(token);
             }
         };
         window.addEventListener("dashboardUpdate", handleSync);
         return () => window.removeEventListener("dashboardUpdate", handleSync);
     }, [searchParams, router]);
 
+    // --- FETCHERS ---
     const fetchUserProfile = async (jwt: string) => {
         try { const response = await api.get("/users/me"); setUser(response.data); } catch (error) { Cookies.remove("token"); router.push("/"); }
     };
     const fetchMatches = async (jwt: string) => {
         try { const res = await api.get("/matches/mine"); setProjectOpportunities(res.data.filter((m: any) => m.role === "Team Leader").reverse()); } catch (e) { }
     }
-    const fetchMyProjects = async (jwt: string) => {
-        try { const res = await api.get("/teams/"); const uid = (await api.get("/users/me")).data._id; setMyProjects(res.data.filter((t: any) => t.members[0] === uid)); } catch (e) { }
-    }
-    
-    // New Fetcher for Dashboard Data
     const fetchDashboardData = async (jwt: string) => {
         try {
-            // Fetch Tasks
             const taskRes = await api.get("/users/me/tasks");
             setActiveTasks(taskRes.data.active);
             setHistoryTasks(taskRes.data.history);
-            
-            // Fetch All Projects (Member/Leader) for Completed section
-            const projRes = await api.get("/users/me/projects");
-            const completed = projRes.data.filter((t: Team) => t.status === "completed");
-            setCompletedProjects(completed);
-
-            // Fetch Favorites
-            const favRes = await api.get("/users/me/favorites_details");
-            setFavorites(favRes.data);
-
         } catch (e) { console.error(e); } finally { setTasksLoading(false); }
     };
 
     // --- ACTIONS ---
-
     const handleReapply = async (match: Match) => {
         const token = Cookies.get("token");
         setProcessingId(match.id + match.project_id);
@@ -178,21 +217,17 @@ export default function Dashboard() {
 
             setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "joined" as const } : m));
             await api.post(`/teams/${match.project_id}/members`, { target_user_id: target });
-
             window.dispatchEvent(new Event("triggerNotificationRefresh"));
-
             alert("Success!");
-            setTimeout(() => { fetchMatches(token!); fetchMyProjects(token!); }, 500);
+            setTimeout(() => { fetchMatches(token!); }, 500);
         } catch (err) { alert("Action failed"); fetchMatches(token!); }
         finally { setProcessingId(null); }
     }
     
-    // New Task Submission Action
     const handleTaskSubmit = async (task: TaskItem) => {
         if(!confirm("Mark this task as done and submit for review?")) return;
         const token = Cookies.get("token");
         try {
-            // Optimistic update
             setActiveTasks(prev => prev.filter(t => t.id !== task.id));
             await api.post(`/teams/${task.project_id}/tasks/${task.id}/submit`);
             fetchDashboardData(token!);
@@ -216,170 +251,186 @@ export default function Dashboard() {
                 </div>
             );
         }
-
         if (match.status === "matched") return <button onClick={() => requestJoin(match)} disabled={isProcessing} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Send className="w-3 h-3" /> Request Join</>}</button>;
         if (match.status === "requested") return <div className="flex-1 bg-gray-700 text-gray-400 py-1.5 rounded text-xs flex items-center justify-center gap-1"><Clock className="w-3 h-3" /> Pending</div>;
         if (match.status === "invited") return <div className="flex gap-1 flex-1"><button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Join Team</>}</button><button onClick={() => handleReject(match)} className="bg-red-600 hover:bg-red-500 text-white px-2 rounded"><XCircle className="w-3 h-3" /></button></div>;
         if (match.status === "joined") return <div className="flex-1 bg-gray-800 text-green-400 border border-green-900 py-1.5 rounded text-xs font-bold text-center">Joined</div>;
-
         return <div className="flex-1 text-gray-500 text-xs text-center py-1 bg-gray-900/50 rounded">Status: {match.status}</div>;
     };
 
     if (!user) return <div className="flex h-screen items-center justify-center bg-gray-950 text-white"><Loader2 className="animate-spin" /></div>;
 
     return (
-        <div className="min-h-screen bg-gray-950 text-white relative">
-            <GlobalHeader />
-
-            <div className="max-w-6xl mx-auto p-8 pt-12">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
-                    <Link href="/profile">
-                        <motion.div whileHover={{ scale: 1.02 }} className="p-6 rounded-2xl bg-gray-900 border border-gray-800 shadow-xl flex items-center gap-4 cursor-pointer group hover:border-purple-500/50 transition-all relative">
-                            <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 className="w-4 h-4 text-purple-400" /></div>
-                            <img src={user.avatar_url} alt="Avatar" className="w-16 h-16 rounded-full border-2 border-purple-500" />
-                            <div><h2 className="text-xl font-semibold">Welcome, {user.username}!</h2><div className="flex flex-wrap gap-2 mt-2">{user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => <span key={i} className="text-xs bg-gray-800 px-2 py-1 rounded text-gray-300 border border-gray-700">{s.name}</span>) : <span className="text-xs text-yellow-500 italic">Tap to add skills +</span>}</div></div>
-                        </motion.div>
-                    </Link>
-                    <motion.div whileHover={{ scale: 1.02 }} className="p-6 rounded-2xl bg-gradient-to-br from-purple-900/50 to-blue-900/50 border border-purple-500/20 flex flex-col justify-center items-start">
-                        <h2 className="text-xl font-semibold mb-2">Build Your Dream Team</h2>
-                        <p className="text-sm text-gray-400 mb-4">Post an idea and find hackers instantly.</p>
-                        <Link href="/find-team"><button className="w-full px-6 py-2 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg flex items-center gap-2"><Plus className="w-4 h-4" /> Create Project</button></Link>
-                    </motion.div>
-                </div>
-                
-                {/* ACTIVE TASKS SECTION */}
-                <div className="w-full mb-12">
-                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-green-400">
-                        <CheckCircle className="w-5 h-5" /> Active Tasks
-                    </h3>
-                    {tasksLoading ? <div className="text-gray-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Loading tasks...</div> : 
-                     activeTasks.length === 0 ? (
-                        <div className="bg-gray-900/30 border border-gray-800 border-dashed rounded-xl p-6 text-center text-gray-500 text-sm">
-                            No active tasks pending.
-                        </div>
-                     ) : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {activeTasks.map(task => (
-                                <div key={task.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col justify-between hover:border-gray-700 transition">
-                                    <div className="mb-4">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded border border-blue-900/50 hover:bg-blue-900/50 transition">
-                                                {task.project_name}
-                                            </Link>
-                                            <span className="text-[10px] text-gray-500 uppercase tracking-widest">{task.status}</span>
-                                        </div>
-                                        <h4 className="font-bold text-white text-sm line-clamp-2">{task.description}</h4>
-                                    </div>
-                                    <div className="flex items-center justify-between mt-auto">
-                                        <div className="flex items-center gap-1.5 text-xs text-gray-400">
-                                            <Calendar className="w-3.5 h-3.5" />
-                                            {new Date(task.deadline).toLocaleDateString()}
-                                        </div>
-                                        {task.status !== 'review' && (
-                                            <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5">
-                                                <Check className="w-3 h-3" /> Mark Done
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                     )}
+        <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
+            
+            {/* --- SIDEBAR --- */}
+            <aside className={`${isCollapsed ? "w-20" : "w-64"} transition-all duration-300 fixed md:relative h-full border-r border-white/5 bg-[#0F0F0F] flex flex-col z-50 shrink-0`}>
+                <div className="p-6 flex items-center justify-between">
+                    {!isCollapsed && <h1 className="text-xl font-black tracking-tighter bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">COLLABQUEST</h1>}
+                    <button onClick={() => setIsCollapsed(!isCollapsed)} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 transition-colors">
+                        {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+                    </button>
                 </div>
 
-                {/* MY APPLICATIONS */}
-                <div className="w-full mb-12">
-                    <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-300"><Briefcase className="w-5 h-5" /> My Applications</h3>
-                    {projectOpportunities.length === 0 ? <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-8 text-center text-gray-500"><p>No active applications.</p><Link href="/matches?type=projects" className="text-purple-400 hover:underline text-sm">Find Projects</Link></div> : (
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {projectOpportunities.map((m) => (
-                                <div key={m.id + m.project_id} className="bg-gray-900 border border-gray-800 p-4 rounded-xl">
-                                    <div className="flex items-center gap-3 mb-3"><div className="w-8 h-8 bg-purple-900/50 rounded-full flex items-center justify-center border border-purple-500/30"><Code2 className="w-4 h-4 text-purple-400" /></div><div><h4 className="font-bold text-sm">{m.project_name}</h4><p className="text-xs text-gray-400">Leader: {m.name}</p></div></div>
-                                    <div className="flex gap-2">
-                                        {renderMatchButton(m)}
-                                        <button onClick={() => openEmailComposer(m)} className="bg-gray-800 p-1.5 rounded hover:text-green-400" title="Email"><Mail className="w-4 h-4" /></button>
-                                        <Link href={`/chat?targetId=${m.id}`}>
-                                            <button className="bg-gray-800 p-1.5 rounded hover:text-blue-400" title="Chat"><MessageSquare className="w-4 h-4" /></button>
-                                        </Link>
-                                        <button onClick={() => handleDeleteMatch(m)} className="bg-gray-800 p-1.5 rounded hover:text-red-400" title="Remove / Unlike"><Trash2 className="w-4 h-4" /></button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                <nav className="flex-1 px-4 space-y-2 overflow-hidden overflow-y-auto custom-scrollbar">
+                    <SidebarLink icon={LayoutDashboard} label="Dashboard" isCollapsed={isCollapsed} active={pathname === "/dashboard"} onClick={() => router.push("/dashboard")} />
+                    <SidebarLink icon={Users} label="Find Team" isCollapsed={isCollapsed} active={pathname === "/find-team"} onClick={() => router.push("/find-team")} />
+                    
+                    {!isCollapsed && <p className="text-[10px] text-gray-500 uppercase px-2 pt-4 mb-2 font-bold tracking-widest">Personal</p>}
+                    
+                    <SidebarLink icon={Code2} label="My Projects" isCollapsed={isCollapsed} active={pathname.startsWith("/myproject")} onClick={() => router.push("/projects")} />
+                    <SidebarLink icon={Star} label="Saved" isCollapsed={isCollapsed} active={pathname.includes("saved")} onClick={() => router.push("/saved")} />
+                    <SidebarLink icon={Clock} label="History" isCollapsed={isCollapsed} active={pathname.includes("history")} onClick={() => router.push("/history")} />
+                </nav>
+
+                <div onClick={() => router.push("/profile")} className="p-4 border-t border-white/5 bg-black/20 cursor-pointer hover:bg-white/5 transition-all mt-auto">
+                    <div className="flex items-center gap-3">
+                        <img src={user.avatar_url || "https://github.com/shadcn.png"} className="w-9 h-9 rounded-lg border border-purple-500/50 object-cover shrink-0" />
+                        {!isCollapsed && (
+                            <div className="flex-1 overflow-hidden">
+                                <p className="text-sm font-bold truncate">{user.username}</p>
+                                <p className="text-[10px] text-green-400 font-mono">TRUST {user.trust_score?.toFixed(1) || "N/A"}</p>
+                            </div>
+                        )}
+                        {!isCollapsed && <Settings className="w-4 h-4 text-gray-500" />}
+                    </div>
+                </div>
+            </aside>
+            {/* --- END SIDEBAR --- */}
+
+            {/* --- MAIN CONTENT --- */}
+            <div className={`flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300`}>
+                <div className="shrink-0">
+                    <GlobalHeader />
                 </div>
 
-                 {/* FAVORITED PROJECTS SECTION (NEW) */}
-                 {favorites.length > 0 && (
-                    <div className="w-full mb-12">
-                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-yellow-500">
-                            <Star className="w-5 h-5 fill-yellow-500" /> Favorited Projects
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {favorites.map(team => (
-                                <Link href={`/teams/${team._id || team.id}`} key={team._id || team.id}>
-                                    <div className="bg-gray-900 border border-yellow-500/20 p-5 rounded-xl hover:scale-[1.02] transition cursor-pointer hover:border-yellow-500/50">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <h4 className="font-bold text-white truncate w-3/4">{team.name}</h4>
-                                            <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" />
-                                        </div>
-                                        <p className="text-xs text-gray-500 line-clamp-2">{team.description}</p>
-                                    </div>
-                                </Link>
-                            ))}
+                <main className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth custom-scrollbar">
+                    <div className="max-w-[1600px] mx-auto space-y-12 pb-20">
+                        
+                        {/* 1. WELCOME SECTION (Full Width) */}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <Link href="/profile">
+                                <motion.div whileHover={{ scale: 1.01 }} className="p-6 rounded-2xl bg-gray-900 border border-gray-800 shadow-xl flex items-center gap-4 cursor-pointer group hover:border-purple-500/50 transition-all relative h-full">
+                                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 className="w-4 h-4 text-purple-400" /></div>
+                                    <img src={user.avatar_url} alt="Avatar" className="w-16 h-16 rounded-full border-2 border-purple-500" />
+                                    <div><h2 className="text-xl font-semibold">Welcome, {user.username}!</h2><div className="flex flex-wrap gap-2 mt-2">{user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => <span key={i} className="text-xs bg-gray-800 px-2 py-1 rounded text-gray-300 border border-gray-700">{s.name}</span>) : <span className="text-xs text-yellow-500 italic">Tap to add skills +</span>}</div></div>
+                                </motion.div>
+                            </Link>
+                            <motion.div whileHover={{ scale: 1.01 }} className="p-6 rounded-2xl bg-gradient-to-br from-purple-900/50 to-blue-900/50 border border-purple-500/20 flex flex-col justify-center items-start h-full">
+                                <h2 className="text-xl font-semibold mb-2">Build Your Dream Team</h2>
+                                <p className="text-sm text-gray-400 mb-4">Post an idea and find hackers instantly.</p>
+                                <Link href="/find-team"><button className="w-full px-6 py-2 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg flex items-center gap-2"><Plus className="w-4 h-4" /> Create Project</button></Link>
+                            </motion.div>
                         </div>
-                    </div>
-                )}
-                
-                {/* COMPLETED PROJECTS SECTION */}
-                {completedProjects.length > 0 && (
-                    <div className="w-full mb-12">
-                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-blue-400">
-                            <Award className="w-5 h-5" /> Completed Projects
-                        </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            {completedProjects.map(team => (
-                                <Link href={`/teams/${team._id || team.id}`} key={team._id || team.id}>
-                                    <div className="bg-gradient-to-br from-gray-900 to-black border border-blue-500/30 p-5 rounded-xl hover:scale-[1.02] transition cursor-pointer">
-                                        <div className="flex justify-between items-start mb-2">
-                                            <h4 className="font-bold text-white truncate">{team.name}</h4>
-                                            <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-black uppercase">DONE</span>
-                                        </div>
-                                        <p className="text-xs text-gray-500 line-clamp-2">{team.description}</p>
+                        
+                        {/* 2. SPLIT LAYOUT: Applications (Left) / Tasks (Right) */}
+                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
+                            
+                            {/* --- LEFT COLUMN: APPLICATIONS (Takes 1/3 Width) --- */}
+                            <div className="xl:col-span-1 w-full">
+                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-300"><Briefcase className="w-5 h-5" /> Applications</h3>
+                                {projectOpportunities.length === 0 ? <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-8 text-center text-gray-500 h-64 flex flex-col items-center justify-center gap-2"><p>No active applications.</p><Link href="/matches?type=projects" className="text-purple-400 hover:underline text-sm font-bold uppercase tracking-wide">Find Projects</Link></div> : (
+                                    <div className="flex flex-col gap-4">
+                                        {projectOpportunities.map((m) => (
+                                            <div key={m.id + m.project_id} className="bg-gray-900 border border-gray-800 p-4 rounded-xl hover:bg-gray-900/80 transition shadow-lg">
+                                                <div className="flex items-center gap-3 mb-3 pb-3 border-b border-gray-800">
+                                                    <div className="w-10 h-10 bg-purple-900/30 rounded-lg flex items-center justify-center border border-purple-500/20 shrink-0"><Code2 className="w-5 h-5 text-purple-400" /></div>
+                                                    <div className="overflow-hidden">
+                                                        <h4 className="font-bold text-sm text-white truncate">{m.project_name}</h4>
+                                                        <p className="text-xs text-gray-400 truncate">Lead: {m.name}</p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex flex-col gap-2">
+                                                    <div className="flex w-full gap-2">
+                                                        {renderMatchButton(m)}
+                                                    </div>
+                                                    <div className="flex gap-1 justify-end">
+                                                        <button onClick={() => openEmailComposer(m)} className="bg-gray-800 p-2 rounded hover:text-green-400 hover:bg-gray-700 transition" title="Email"><Mail className="w-4 h-4" /></button>
+                                                        <Link href={`/chat?targetId=${m.id}`}>
+                                                            <button className="bg-gray-800 p-2 rounded hover:text-blue-400 hover:bg-gray-700 transition" title="Chat"><MessageSquare className="w-4 h-4" /></button>
+                                                        </Link>
+                                                        <button onClick={() => handleDeleteMatch(m)} className="bg-gray-800 p-2 rounded hover:text-red-400 hover:bg-gray-700 transition" title="Remove"><Trash2 className="w-4 h-4" /></button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))}
                                     </div>
-                                </Link>
-                            ))}
-                        </div>
-                    </div>
-                )}
-                
-                {/* TASK HISTORY SECTION */}
-                {historyTasks.length > 0 && (
-                    <div className="w-full">
-                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-400">
-                            <Layout className="w-5 h-5" /> Task History
-                        </h3>
-                        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden max-h-60 overflow-y-auto custom-scrollbar">
-                            {historyTasks.map((task, i) => (
-                                <div key={i} className="flex items-center justify-between p-4 border-b border-gray-800 last:border-0 hover:bg-gray-800/50 transition">
-                                    <div className="flex flex-col">
-                                        <span className="text-sm font-medium text-gray-300 line-through decoration-gray-600">{task.description}</span>
-                                        <div className="flex items-center gap-2 mt-1">
-                                            <span className="text-[10px] text-blue-400">{task.project_name}</span>
-                                            <span className="text-[10px] text-gray-600">•</span>
-                                            <span className="text-[10px] text-gray-500">Completed</span>
-                                        </div>
-                                    </div>
-                                    <div className="text-green-500">
-                                        <CheckCircle className="w-4 h-4" />
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
+                                )}
+                            </div>
 
+                            {/* --- RIGHT COLUMN: ACTIVE TASKS (Takes 2/3 Width) --- */}
+                            <div className="xl:col-span-2 w-full">
+                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-green-400">
+                                    <CheckCircle className="w-5 h-5" /> Active Tasks
+                                </h3>
+                                {tasksLoading ? <div className="text-gray-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Loading tasks...</div> : 
+                                activeTasks.length === 0 ? (
+                                    <div className="bg-gray-900/30 border border-gray-800 border-dashed rounded-xl p-8 text-center text-gray-500 text-sm h-64 flex items-center justify-center flex-col gap-2">
+                                        <CheckCircle className="w-8 h-8 text-gray-700 mb-2" />
+                                        <span>No active tasks pending. You are all caught up!</span>
+                                    </div>
+                                ) : (
+                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                        {activeTasks.map(task => (
+                                            <div key={task.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col justify-between hover:border-green-500/30 transition shadow-lg">
+                                                <div className="mb-4">
+                                                    <div className="flex justify-between items-start mb-2">
+                                                        <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded border border-blue-900/50 hover:bg-blue-900/50 transition font-mono uppercase">
+                                                            {task.project_name}
+                                                        </Link>
+                                                        <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">{task.status}</span>
+                                                    </div>
+                                                    <h4 className="font-bold text-white text-sm line-clamp-2 leading-relaxed">{task.description}</h4>
+                                                </div>
+                                                <div className="flex items-center justify-between mt-auto pt-4 border-t border-gray-800">
+                                                    <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                                                        <Calendar className="w-3.5 h-3.5" />
+                                                        {new Date(task.deadline).toLocaleDateString()}
+                                                    </div>
+                                                    {task.status !== 'review' && (
+                                                        <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-green-900/20">
+                                                            <Check className="w-3 h-3" /> Mark Done
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                        
+                        {/* Task History */}
+                        {historyTasks.length > 0 && (
+                            <div className="w-full">
+                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-400">
+                                    <Layout className="w-5 h-5" /> Task History
+                                </h3>
+                                <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden max-h-60 overflow-y-auto custom-scrollbar">
+                                    {historyTasks.map((task, i) => (
+                                        <div key={i} className="flex items-center justify-between p-4 border-b border-gray-800 last:border-0 hover:bg-gray-800/50 transition">
+                                            <div className="flex flex-col">
+                                                <span className="text-sm font-medium text-gray-300 line-through decoration-gray-600">{task.description}</span>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className="text-[10px] text-blue-400">{task.project_name}</span>
+                                                    <span className="text-[10px] text-gray-600">•</span>
+                                                    <span className="text-[10px] text-gray-500">Completed</span>
+                                                </div>
+                                            </div>
+                                            <div className="text-green-500">
+                                                <CheckCircle className="w-4 h-4" />
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                    </div>
+                </main>
             </div>
+
+            {/* Email Modal */}
             <AnimatePresence>
                 {showEmailModal && emailRecipient && (
                     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
@@ -391,5 +442,14 @@ export default function Dashboard() {
                 )}
             </AnimatePresence>
         </div>
+    );
+}
+
+/* -------------------- MAIN EXPORT WITH SUSPENSE -------------------- */
+export default function Dashboard() {
+    return (
+        <Suspense fallback={<div className="flex h-screen items-center justify-center bg-gray-950 text-white"><Loader2 className="animate-spin text-purple-500" /></div>}>
+            <DashboardContent />
+        </Suspense>
     );
 }
