@@ -10,6 +10,10 @@ load_dotenv()
 
 app = FastAPI(title="CollabQuest API", version="1.0")
 
+origins = [
+    "https://y-72tg0smfl-aditya125031s-projects.vercel.app/",  # Your deployed frontend
+    "http://localhost:3000"
+] 
 FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
 # --- CORS SETTINGS ---

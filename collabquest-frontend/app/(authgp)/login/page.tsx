@@ -18,28 +18,30 @@ export default function LoginPage() {
   // Now you don't have to type process.env... repeatedly in your JSX.
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-  const handleEmailLogin = async (e: React.FormEvent) => {
+ const handleEmailLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
     setLoading(true);
 
     try {
-      // using 'api' instance automatically handles the base URL
-      const response = await api.post("/auth/login/email", { 
-        email, 
-        password 
-      });
-
-      const data = response.data;
+      // --- BYPASS START ---
+      // Comment out the real API call for now:
+      // const response = await api.post("/auth/login/email", { email, password });
       
-      // Store token
-      Cookies.set("token", data.token); 
+      console.log("⚠️ BYPASS MODE: Logging in without backend...");
+      
+      // Simulate a network delay (optional, just for feel)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+
+      // Set a FAKE token so your middleware/auth checks pass
+      Cookies.set("token", "fake-dev-token-12345"); 
       
       router.push("/dashboard");
+      // --- BYPASS END ---
+
     } catch (err: any) {
       console.error("Login failed", err);
-      // specific error message from backend or fallback
-      setError(err.response?.data?.detail || "Invalid credentials.");
+      setError("Something went wrong (even in bypass mode).");
     } finally {
       setLoading(false);
     }

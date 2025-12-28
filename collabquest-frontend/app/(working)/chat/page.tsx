@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
@@ -58,7 +58,8 @@ interface GroupDetails {
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
-export default function ChatPage() {
+// --- 1. RENAMED THE MAIN LOGIC COMPONENT TO 'ChatContent' ---
+function ChatContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const [userId, setUserId] = useState("");
@@ -247,6 +248,7 @@ export default function ChatPage() {
             } catch (err: any) { console.error("Screen share error:", err); }
         }
     };
+    
 
     const toggleMute = () => { if (localStream.current) { const state = !isMuted; localStream.current.getAudioTracks().forEach(t => t.enabled = !state); setIsMuted(state); } };
     const toggleCamera = () => { if (localStream.current) { const state = !isCameraOff; localStream.current.getVideoTracks().forEach(t => t.enabled = !state); setIsCameraOff(state); } };
@@ -271,6 +273,8 @@ export default function ChatPage() {
     const formatTime = (iso: string) => { if (!iso) return ""; return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
     const filteredChats = chatList.filter(chat => chat.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
+    
+    
     // --- FIX: CALCULATED HEIGHT TO PREVENT SCROLL ---
     return (
         <div className="flex flex-col h-[calc(100vh-140px)] text-white overflow-hidden relative">
@@ -512,5 +516,15 @@ export default function ChatPage() {
                 )}
             </AnimatePresence>
         </div>
+        
+    );
+}
+
+// --- 2. ADDED THE WRAPPER EXPORT HERE ---
+export default function ChatPage() {
+    return (
+        <Suspense fallback={<div className="flex h-screen items-center justify-center text-white">Loading Chat...</div>}>
+            <ChatContent />
+        </Suspense>
     );
 }
