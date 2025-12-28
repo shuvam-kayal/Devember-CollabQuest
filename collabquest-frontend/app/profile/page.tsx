@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
@@ -23,11 +23,17 @@ interface SocialLink { platform: string; url: string; }
 interface Achievement { title: string; date?: string; description?: string; }
 interface Education { institute: string; course: string; year_of_study: string; is_completed: boolean; is_visible: boolean; }
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
 export default function ProfilePage() {
     const router = useRouter();
+    const searchParams = useSearchParams(); // Hook for query params
     const [loading, setLoading] = useState(true);
 
     // Profile State
+    const [username, setUsername] = useState(""); 
+    const [fullName, setFullName] = useState(""); 
+    const [avatarUrl, setAvatarUrl] = useState(""); 
     const [email, setEmail] = useState("");
     const [about, setAbout] = useState("");
     const [skills, setSkills] = useState<{ name: string, level: string }[]>([]);
@@ -49,6 +55,7 @@ export default function ProfilePage() {
     const [platformStats, setPlatformStats] = useState<any>({});
     const [trustBreakdown, setTrustBreakdown] = useState<any>(null);
     const [visibility, setVisibility] = useState<any>({
+        full_name: true,
         linkedin: true, codeforces: true, leetcode: true, 
         education: true, achievements: true, ratings: true,
         email: false 
@@ -73,8 +80,26 @@ export default function ProfilePage() {
     useEffect(() => {
         const token = Cookies.get("token");
         if (!token) return router.push("/");
+        // Handle Linking Success/Error from URL
+        const success = searchParams.get("success");
+        const error = searchParams.get("error");
+        
+        if (success === "github_linked") {
+            alert("✅ GitHub account linked successfully!");
+            // Clean URL
+            router.replace("/profile");
+        } else if (error === "github_taken") {
+            alert("❌ This GitHub account is already linked to another user.");
+            router.replace("/profile");
+        } else if (error) {
+            alert("❌ Failed to link account.");
+            router.replace("/profile");
+        }
         api.get("/users/me").then(res => {
             const u = res.data;
+            setUsername(u.username || "");
+            setFullName(u.full_name || ""); 
+            setAvatarUrl(u.avatar_url || ""); 
             setEmail(u.email || "");
             setAbout(u.about || "");
             setSkills(u.skills || []);
@@ -95,11 +120,13 @@ export default function ProfilePage() {
             setConnectedAccounts(u.connected_accounts || {});
             setRatings(u.ratings_received || []);
         }).finally(() => setLoading(false));
-    }, []);
+    }, [searchParams, router]);
 
     const saveProfile = async () => {
         try {
             await api.put("/users/profile", {
+                full_name: fullName, 
+                avatar_url: avatarUrl, 
                 about, interests, availability,
                 skills: skills.map(s => s.name),
                 is_looking_for_team: isLookingForTeam,
@@ -121,6 +148,16 @@ export default function ProfilePage() {
     };
 
     const connectPlatform = async (platform: string) => {
+        if (platform === "github") {
+            // SPECIAL HANDLER FOR GITHUB (OAUTH REDIRECT)
+            const token = Cookies.get("token");
+            if (!token) return alert("Please log in first.");
+            // Redirect to backend with token as state
+            window.location.href = `${API_URL}/auth/link/github?token=${token}`;
+            return;
+        }
+
+        // Standard API handler for others
         const url = prompt(`Enter your ${platform} Profile URL/Handle:`);
         if (!url) return;
         try {

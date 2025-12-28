@@ -40,6 +40,21 @@ async def github_login():
         f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope=read:user user:email"
     )
 
+@router.get("/link/github")
+async def link_github(token: str):
+    """
+    Initiates GitHub OAuth flow for linking an account to an EXISTING user.
+    Passes the current user's JWT as 'state' to persist session across the redirect.
+    """
+    try:
+        verify_token(token) # Ensure the user initiating the link is valid
+    except:
+        raise HTTPException(status_code=401, detail="Invalid session")
+        
+    return RedirectResponse(
+        f"https://github.com/login/oauth/authorize?client_id={GITHUB_CLIENT_ID}&scope=read:user user:email&state={token}"
+    )
+
 @router.get("/callback")
 async def github_callback(code: str):
     token = await get_github_token(code)

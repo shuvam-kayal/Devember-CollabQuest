@@ -16,6 +16,8 @@ class ProfileUpdate(BaseModel):
     about: str
     availability: List[DayAvailability]
     is_looking_for_team: bool = True
+    full_name: Optional[str] = None  # <--- ADDED
+    avatar_url: Optional[str] = None # <--- ADDED
     
     # New Fields
     age: Optional[str] = None
@@ -111,6 +113,8 @@ async def update_profile(data: ProfileUpdate, current_user: User = Depends(get_c
     current_user.is_looking_for_team = data.is_looking_for_team
     
     # Save New Fields
+    if data.full_name is not None: current_user.full_name = data.full_name
+    if data.avatar_url is not None: current_user.avatar_url = data.avatar_url
     current_user.age = data.age
     current_user.education = data.education
     current_user.social_links = data.social_links
