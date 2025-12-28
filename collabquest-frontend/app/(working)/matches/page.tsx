@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react"; // <--- 1. Added Suspense
 import { useSearchParams, useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
@@ -22,7 +22,8 @@ function SwipeStamp({ type, opacity, rotate }: { type: "LIKE" | "NOPE"; opacity:
     );
 }
 
-export default function SwipeMatchPage() {
+// --- 2. Renamed the logic component to SwipeMatchContent ---
+function SwipeMatchContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
 
@@ -161,7 +162,7 @@ export default function SwipeMatchPage() {
                         
                         return (
                             <SwipeCard 
-                                key={uniqueKey} // FIXED: Key passed directly here
+                                key={uniqueKey} 
                                 item={item} 
                                 mode={mode} 
                                 isTop={isTop} 
@@ -219,6 +220,15 @@ export default function SwipeMatchPage() {
     );
 }
 
+// --- 3. Wrapper Component with Suspense ---
+export default function SwipeMatchPage() {
+    return (
+        <Suspense fallback={<div className="fixed inset-0 flex items-center justify-center bg-[#09090b] text-white"><Loader2 className="animate-spin w-12 h-12 text-violet-500" /></div>}>
+            <SwipeMatchContent />
+        </Suspense>
+    );
+}
+
 function SwipeCard({ item, mode, isTop, x, rotate, opacityLike, opacityNope, onSwipe }: any) {
     const skills = (mode === "users" ? item.skills : item.needed_skills) || [];
 
@@ -272,64 +282,62 @@ function SwipeCard({ item, mode, isTop, x, rotate, opacityLike, opacityNope, onS
             </div>
 
             {/* Content Area */}
-            {/* 1. Changed px-6 to px-4 to give text more width */}
-{/* 2. Removed overflow-y-auto since you don't want scrolling */}
-<div className="flex-1 px-4 pb-4 flex flex-col items-center text-center w-full">
-    
-    {/* Header: Reduced bottom margin (mb-1) */}
-    <h2 className="text-2xl font-bold text-white leading-tight mb-1 truncate w-full">
-        {mode === "users" ? item.username : item.name}
-    </h2>
-    
-    {/* Subheader: Reduced bottom margin (mb-3) */}
-    <div className="flex items-center gap-2 text-zinc-400 text-sm mb-3 font-medium">
-         {mode === "users" ? <Briefcase className="w-4 h-4"/> : <Code2 className="w-4 h-4"/>}
-         <span>{mode === "users" ? "Full Stack Developer" : "Open Source Project"}</span>
-         {mode === "users" && (
-            <>
-                <span className="text-zinc-700">•</span>
-                <MapPin className="w-4 h-4"/>
-                <span>Remote</span>
-            </>
-         )}
-    </div>
-    
-    {/* Bio: Reduced bottom margin significantly (mb-4 instead of mb-6) */}
-    <p className="text-sm text-zinc-300 leading-relaxed line-clamp-3 mb-4 max-w-[98%]">
-        {item.description || "No bio provided. This user prefers to let their code speak for itself."}
-    </p>
+            <div className="flex-1 px-4 pb-4 flex flex-col items-center text-center w-full">
+                
+                {/* Header: Reduced bottom margin (mb-1) */}
+                <h2 className="text-2xl font-bold text-white leading-tight mb-1 truncate w-full">
+                    {mode === "users" ? item.username : item.name}
+                </h2>
+                
+                {/* Subheader: Reduced bottom margin (mb-3) */}
+                <div className="flex items-center gap-2 text-zinc-400 text-sm mb-3 font-medium">
+                     {mode === "users" ? <Briefcase className="w-4 h-4"/> : <Code2 className="w-4 h-4"/>}
+                     <span>{mode === "users" ? "Full Stack Developer" : "Open Source Project"}</span>
+                     {mode === "users" && (
+                        <>
+                            <span className="text-zinc-700">•</span>
+                            <MapPin className="w-4 h-4"/>
+                            <span>Remote</span>
+                        </>
+                     )}
+                </div>
+                
+                {/* Bio: Reduced bottom margin significantly (mb-4 instead of mb-6) */}
+                <p className="text-sm text-zinc-300 leading-relaxed line-clamp-3 mb-4 max-w-[98%]">
+                    {item.description || "No bio provided. This user prefers to let their code speak for itself."}
+                </p>
 
-    {/* Divider: Reduced margin (mb-3) */}
-    <div className="w-full h-px bg-zinc-800/80 mb-3"></div>
+                {/* Divider: Reduced margin (mb-3) */}
+                <div className="w-full h-px bg-zinc-800/80 mb-3"></div>
 
-    {/* Stats: Reduced padding inside the boxes (py-2 instead of py-3) */}
-    {mode === "users" && (
-        <div className="grid grid-cols-2 gap-2 w-full mb-3">
-            <div className="bg-zinc-900/60 border border-zinc-800 py-2 px-3 rounded-xl flex flex-col items-center">
-                <ShieldCheck className={`w-4 h-4 mb-1 ${item.trust_score >= 8 ? "text-green-400" : "text-yellow-400"}`} />
-                <span className="text-base font-bold text-white">{item.trust_score}</span>
-                <span className="text-[9px] uppercase text-zinc-500 font-bold tracking-wider">Trust</span>
+                {/* Stats: Reduced padding inside the boxes (py-2 instead of py-3) */}
+                {mode === "users" && (
+                    <div className="grid grid-cols-2 gap-2 w-full mb-3">
+                        <div className="bg-zinc-900/60 border border-zinc-800 py-2 px-3 rounded-xl flex flex-col items-center">
+                            <ShieldCheck className={`w-4 h-4 mb-1 ${item.trust_score >= 8 ? "text-green-400" : "text-yellow-400"}`} />
+                            <span className="text-base font-bold text-white">{item.trust_score}</span>
+                            <span className="text-[9px] uppercase text-zinc-500 font-bold tracking-wider">Trust</span>
+                        </div>
+                        <div className="bg-zinc-900/60 border border-zinc-800 py-2 px-3 rounded-xl flex flex-col items-center">
+                            <Code2 className="w-4 h-4 mb-1 text-blue-400" />
+                            <span className="text-base font-bold text-white">{skills.length}</span>
+                            <span className="text-[9px] uppercase text-zinc-500 font-bold tracking-wider">Skills</span>
+                        </div>
+                    </div>
+                )}
+
+                {/* Skills: Removed flex-1 to stop it from pushing other elements */}
+                <div className="w-full">
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                        {skills.slice(0, 8).map((skill: any, i: number) => (
+                            <span key={i} className="text-xs font-medium bg-[#1e1e24] text-zinc-300 px-2.5 py-1 rounded-md border border-zinc-800">
+                                {typeof skill === "string" ? skill : skill.name}
+                            </span>
+                        ))}
+                        {skills.length > 8 && <span className="text-xs text-zinc-500 px-2 pt-1 font-medium">+{skills.length - 8}</span>}
+                    </div>
+                </div>
             </div>
-            <div className="bg-zinc-900/60 border border-zinc-800 py-2 px-3 rounded-xl flex flex-col items-center">
-                <Code2 className="w-4 h-4 mb-1 text-blue-400" />
-                <span className="text-base font-bold text-white">{skills.length}</span>
-                <span className="text-[9px] uppercase text-zinc-500 font-bold tracking-wider">Skills</span>
-            </div>
-        </div>
-    )}
-
-    {/* Skills: Removed flex-1 to stop it from pushing other elements */}
-    <div className="w-full">
-        <div className="flex flex-wrap justify-center gap-1.5">
-            {skills.slice(0, 8).map((skill: any, i: number) => (
-                <span key={i} className="text-xs font-medium bg-[#1e1e24] text-zinc-300 px-2.5 py-1 rounded-md border border-zinc-800">
-                    {typeof skill === "string" ? skill : skill.name}
-                </span>
-            ))}
-            {skills.length > 8 && <span className="text-xs text-zinc-500 px-2 pt-1 font-medium">+{skills.length - 8}</span>}
-        </div>
-    </div>
-</div>
         </motion.div>
     );
 }

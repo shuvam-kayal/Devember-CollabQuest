@@ -31,7 +31,6 @@ export default function LoginPage() {
       });
 
       const data = response.data;
-      
       // Store token
       Cookies.set("token", data.token); 
       

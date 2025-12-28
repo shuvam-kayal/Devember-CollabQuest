@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
@@ -55,10 +55,27 @@ interface GroupDetails {
     id: string; name: string; avatar_url: string; admin_id: string; is_team_group: boolean; members: { id: string, username: string, avatar_url: string }[];
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+// --- CORRECTION 1: SMART WEBSOCKET URL CALCULATION ---
+// This ensures we use WSS if on HTTPS, avoiding the "Mixed Content" error
+const getWsUrl = () => {
+    // 1. If you explicitly set the WS URL in .env, use it
+    if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+
+    // 2. Otherwise, auto-calculate it from the API URL
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    
+    // Replace http:// with ws:// and https:// with wss://
+    return apiUrl.replace(/^http/, 'ws');
+};
+
+const WS_URL = getWsUrl();
+
+// --- CORRECTION 2: CENTRALIZED AVATAR CONSTANT ---
+const DEFAULT_AVATAR = process.env.NEXT_PUBLIC_DEFAULT_AVATAR || "https://github.com/shadcn.png";
+
 const rtcConfig = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
-export default function ChatPage() {
+function ChatContent() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const [userId, setUserId] = useState("");
@@ -130,34 +147,39 @@ export default function ChatPage() {
     const connectWs = (uid: string) => {
         const socket = new WebSocket(`${WS_URL}/chat/ws/${uid}`);
         socket.onmessage = async (event) => {
-            const data = JSON.parse(event.data);
-            
-            if (data.event === 'offer') {
-                if (isInCall) return; 
-                setIncomingCall({ sender_id: data.sender_id, offer: data.data.offer, callType: data.data.callType });
-            } 
-            else if (data.event === 'answer') {
-                if (peerConnection.current && peerConnection.current.signalingState !== "stable") {
-                    await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.data));
+            // --- CORRECTION 3: SAFETY TRY-CATCH FOR JSON PARSING ---
+            try {
+                const data = JSON.parse(event.data);
+                
+                if (data.event === 'offer') {
+                    if (isInCall) return; 
+                    setIncomingCall({ sender_id: data.sender_id, offer: data.data.offer, callType: data.data.callType });
+                } 
+                else if (data.event === 'answer') {
+                    if (peerConnection.current && peerConnection.current.signalingState !== "stable") {
+                        await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.data));
+                    }
                 }
-            }
-            else if (data.event === 'ice-candidate') {
-                if (peerConnection.current) {
-                    try { await peerConnection.current.addIceCandidate(new RTCIceCandidate(data.data)); } catch(e) { }
+                else if (data.event === 'ice-candidate') {
+                    if (peerConnection.current) {
+                        try { await peerConnection.current.addIceCandidate(new RTCIceCandidate(data.data)); } catch(e) { }
+                    }
                 }
-            }
-            else if (data.event === 'hang-up') { endCall(); }
-            else if (data.event === "message") {
-                const incomingMsg = data.message;
-                const currentChatId = activeChatRef.current;
-                const isRelevantChat = currentChatId && (incomingMsg.sender_id === currentChatId || incomingMsg.recipient_id === currentChatId);
-                if (isRelevantChat) {
-                    setMessages(prev => [...prev, incomingMsg]);
-                    api.post(`/chat/read/${currentChatId}`, {}).then(() => window.dispatchEvent(new Event("triggerNotificationRefresh")));
-                } else {
-                    fetchChatList();
-                    window.dispatchEvent(new Event("triggerNotificationRefresh"));
+                else if (data.event === 'hang-up') { endCall(); }
+                else if (data.event === "message") {
+                    const incomingMsg = data.message;
+                    const currentChatId = activeChatRef.current;
+                    const isRelevantChat = currentChatId && (incomingMsg.sender_id === currentChatId || incomingMsg.recipient_id === currentChatId);
+                    if (isRelevantChat) {
+                        setMessages(prev => [...prev, incomingMsg]);
+                        api.post(`/chat/read/${currentChatId}`, {}).then(() => window.dispatchEvent(new Event("triggerNotificationRefresh")));
+                    } else {
+                        fetchChatList();
+                        window.dispatchEvent(new Event("triggerNotificationRefresh"));
+                    }
                 }
+            } catch (error) {
+                console.error("WS Message Error:", error);
             }
         };
         setWs(socket);
@@ -247,13 +269,15 @@ export default function ChatPage() {
             } catch (err: any) { console.error("Screen share error:", err); }
         }
     };
+    
 
     const toggleMute = () => { if (localStream.current) { const state = !isMuted; localStream.current.getAudioTracks().forEach(t => t.enabled = !state); setIsMuted(state); } };
     const toggleCamera = () => { if (localStream.current) { const state = !isCameraOff; localStream.current.getVideoTracks().forEach(t => t.enabled = !state); setIsCameraOff(state); } };
 
     // --- CHAT LOGIC ---
-    const fetchChatList = async () => { try { const res = await api.get("/chat/conversations"); const mapped = res.data.map((c: any) => ({ id: c.id, name: c.username || "Unknown", type: c.type, avatar: c.avatar_url || "https://github.com/shadcn.png", last_message: c.last_message || "", timestamp: c.last_timestamp, unread_count: c.unread_count || 0, is_online: c.is_online, member_count: c.member_count, is_team_group: c.is_team_group, admin_id: c.admin_id })); setChatList(mapped); } catch (e) { } };
-    const handleSelectChat = async (targetId: string) => { try { let chat = chatList.find(c => c.id === targetId); let isUser = false; if (!chat) { try { const uRes = await api.get(`/users/${targetId}`); if (uRes.data) { chat = { id: targetId, name: uRes.data.username || "User", type: "user", avatar: uRes.data.avatar_url || "https://github.com/shadcn.png", last_message: "", timestamp: "", unread_count: 0, is_online: false }; isUser = true; } } catch { try { const gRes = await api.get(`/chat/groups/${targetId}`); chat = { id: targetId, name: gRes.data.name || "Group", type: "group", avatar: gRes.data.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=Group", last_message: "", timestamp: "", unread_count: 0, is_online: true, admin_id: gRes.data.admin_id }; isUser = false; } catch { return; } } } else { isUser = chat.type === 'user'; } setActiveChat(chat!); setShowGroupInfo(false); setShowProfileInfo(false); setShowChatMenu(false); setPendingAttachments([]); if (isUser) { api.get(`/users/${targetId}`).then(res => setActiveUserProfile(res.data)).catch(() => { }); } else { setChatStatus("accepted"); api.get(`/chat/groups/${targetId}`).then(res => setGroupMembers(res.data.members)).catch(() => { }); } api.get(`/chat/history/${targetId}`).then(res => { setMessages(res.data.messages || []); if (res.data.meta) { if (res.data.meta.blocked_by_me) setChatStatus("blocked_by_me"); else if (res.data.meta.blocked_by_them) setChatStatus("blocked_by_them"); else if (res.data.meta.is_pending) setChatStatus("pending_incoming"); else setChatStatus("accepted"); } fetchChatList(); window.dispatchEvent(new Event("triggerNotificationRefresh")); }); } catch (e) { } };
+    // Updated: Uses DEFAULT_AVATAR
+    const fetchChatList = async () => { try { const res = await api.get("/chat/conversations"); const mapped = res.data.map((c: any) => ({ id: c.id, name: c.username || "Unknown", type: c.type, avatar: c.avatar_url || DEFAULT_AVATAR, last_message: c.last_message || "", timestamp: c.last_timestamp, unread_count: c.unread_count || 0, is_online: c.is_online, member_count: c.member_count, is_team_group: c.is_team_group, admin_id: c.admin_id })); setChatList(mapped); } catch (e) { } };
+    const handleSelectChat = async (targetId: string) => { try { let chat = chatList.find(c => c.id === targetId); let isUser = false; if (!chat) { try { const uRes = await api.get(`/users/${targetId}`); if (uRes.data) { chat = { id: targetId, name: uRes.data.username || "User", type: "user", avatar: uRes.data.avatar_url || DEFAULT_AVATAR, last_message: "", timestamp: "", unread_count: 0, is_online: false }; isUser = true; } } catch { try { const gRes = await api.get(`/chat/groups/${targetId}`); chat = { id: targetId, name: gRes.data.name || "Group", type: "group", avatar: gRes.data.avatar_url || "https://api.dicebear.com/7.x/initials/svg?seed=Group", last_message: "", timestamp: "", unread_count: 0, is_online: true, admin_id: gRes.data.admin_id }; isUser = false; } catch { return; } } } else { isUser = chat.type === 'user'; } setActiveChat(chat!); setShowGroupInfo(false); setShowProfileInfo(false); setShowChatMenu(false); setPendingAttachments([]); if (isUser) { api.get(`/users/${targetId}`).then(res => setActiveUserProfile(res.data)).catch(() => { }); } else { setChatStatus("accepted"); api.get(`/chat/groups/${targetId}`).then(res => setGroupMembers(res.data.members)).catch(() => { }); } api.get(`/chat/history/${targetId}`).then(res => { setMessages(res.data.messages || []); if (res.data.meta) { if (res.data.meta.blocked_by_me) setChatStatus("blocked_by_me"); else if (res.data.meta.blocked_by_them) setChatStatus("blocked_by_them"); else if (res.data.meta.is_pending) setChatStatus("pending_incoming"); else setChatStatus("accepted"); } fetchChatList(); window.dispatchEvent(new Event("triggerNotificationRefresh")); }); } catch (e) { } };
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => { if (!e.target.files || e.target.files.length === 0) return; setIsUploading(true); const formData = new FormData(); formData.append("file", e.target.files[0]); try { const res = await api.post("/chat/upload", formData, { headers: { "Content-Type": "multipart/form-data" } }); setPendingAttachments(prev => [...prev, res.data]); } catch (err) { alert("Upload failed"); } finally { setIsUploading(false); if (fileInputRef.current) fileInputRef.current.value = ""; } };
     const removeAttachment = (index: number) => { setPendingAttachments(prev => prev.filter((_, i) => i !== index)); };
     const sendMessage = () => { if (!ws || !activeChat) return; if (!newMessage.trim() && pendingAttachments.length === 0) return; const msgPayload = { recipient_id: activeChat.id, content: newMessage, attachments: pendingAttachments }; ws.send(JSON.stringify(msgPayload)); setMessages(prev => [...prev, { sender_id: userId, content: newMessage, timestamp: new Date().toISOString(), attachments: pendingAttachments }]); setNewMessage(""); setPendingAttachments([]); if (chatStatus === 'none' && activeChat.type === 'user') setChatStatus('pending_outgoing'); };
@@ -263,14 +287,21 @@ export default function ChatPage() {
     const removeGroupMember = async (targetId: string) => { if (!groupDetails) return; try { await api.delete(`/chat/groups/${groupDetails.id}/members/${targetId}`); const res = await api.get(`/chat/groups/${groupDetails.id}`); setGroupDetails(res.data); } catch (e) { alert("Failed to remove member"); } };
     const leaveGroup = async () => { if (!groupDetails || !confirm("Are you sure you want to leave?")) return; try { await api.post(`/chat/groups/${groupDetails.id}/leave`, {}); window.location.reload(); } catch (e) { alert("Failed to leave group"); } };
     const blockGroup = async () => { if (!groupDetails || !confirm("Block this group? You will leave and cannot be added back.")) return; try { await api.post(`/chat/groups/${groupDetails.id}/block`, {}); window.location.reload(); } catch (e) { alert("Failed to block group"); } };
-    const openAddMemberModal = async () => { try { const res = await api.get("/chat/contacts"); const existingIds = groupDetails?.members.map(m => m.id) || []; setContacts(res.data.filter((c: any) => !existingIds.includes(c.id))); setShowAddMemberModal(true); } catch (e) { alert("Failed"); } };
+    
+    // Updated: Added safety Array check for contacts
+    const openAddMemberModal = async () => { try { const res = await api.get("/chat/contacts"); const safeContacts = Array.isArray(res.data) ? res.data : []; const existingIds = groupDetails?.members.map(m => m.id) || []; setContacts(safeContacts.filter((c: any) => !existingIds.includes(c.id))); setShowAddMemberModal(true); } catch (e) { alert("Failed"); } };
     const addToGroup = async (targetId: string) => { if (!groupDetails) return; try { await api.put(`/chat/groups/${groupDetails.id}/members`, { user_id: targetId }); setShowAddMemberModal(false); const res = await api.get(`/chat/groups/${groupDetails.id}`); setGroupDetails(res.data); } catch (e: any) { alert("Failed to add member"); } }
-    const openGroupModal = async () => { try { const res = await api.get("/chat/contacts"); setContacts(res.data); setShowGroupModal(true); } catch (e) { alert("Failed"); } };
+    
+    // Updated: Added safety Array check for contacts
+    const openGroupModal = async () => { try { const res = await api.get("/chat/contacts"); setContacts(Array.isArray(res.data) ? res.data : []); setShowGroupModal(true); } catch (e) { alert("Failed"); } };
+    
     const toggleContact = (id: string) => { if (selectedContacts.includes(id)) setSelectedContacts(prev => prev.filter(c => c !== id)); else setSelectedContacts(prev => [...prev, id]); };
     const createGroup = async () => { if (!groupName || selectedContacts.length === 0) return alert("Invalid group"); try { await api.post("/chat/groups", { name: groupName, member_ids: selectedContacts }); setShowGroupModal(false); setGroupName(""); setSelectedContacts([]); fetchChatList(); } catch (e) { alert("Failed"); } };
     const formatTime = (iso: string) => { if (!iso) return ""; return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); };
     const filteredChats = chatList.filter(chat => chat.name.toLowerCase().includes(searchQuery.toLowerCase()));
 
+    
+    
     // --- FIX: CALCULATED HEIGHT TO PREVENT SCROLL ---
     return (
         <div className="flex flex-col h-[calc(100vh-140px)] text-white overflow-hidden relative">
@@ -375,7 +406,8 @@ export default function ChatPage() {
                         {filteredChats.map(chat => (
                             <div key={chat.id} onClick={() => handleSelectChat(chat.id)} className={`p-3 flex items-center gap-3 rounded-2xl cursor-pointer transition-all ${activeChat?.id === chat.id ? 'bg-purple-600/10 border border-purple-500/20' : 'hover:bg-white/5 border border-transparent'}`}>
                                 <div className="relative">
-                                    <img src={chat.avatar || "https://github.com/shadcn.png"} className="w-12 h-12 rounded-full object-cover border border-white/10" />
+                                    {/* Updated: Uses DEFAULT_AVATAR */}
+                                    <img src={chat.avatar || DEFAULT_AVATAR} className="w-12 h-12 rounded-full object-cover border border-white/10" />
                                     {chat.is_online && chat.type === 'user' && <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-[#13161C]"></div>}
                                 </div>
                                 <div className="flex-1 overflow-hidden">
@@ -402,7 +434,8 @@ export default function ChatPage() {
                                 <div className="flex items-center gap-3">
                                     <button onClick={() => setActiveChat(null)} className="md:hidden p-2 -ml-2 text-gray-400"><ChevronLeft/></button>
                                     <div className="relative cursor-pointer" onClick={handleHeaderClick}>
-                                        <img src={activeChat.avatar || "https://github.com/shadcn.png"} className="w-10 h-10 rounded-full object-cover border border-white/10" />
+                                        {/* Updated: Uses DEFAULT_AVATAR */}
+                                        <img src={activeChat.avatar || DEFAULT_AVATAR} className="w-10 h-10 rounded-full object-cover border border-white/10" />
                                         {activeChat.is_online && activeChat.type === 'user' && <div className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 rounded-full border-2 border-[#13161C]"></div>}
                                     </div>
                                     <div onClick={handleHeaderClick} className="cursor-pointer">
@@ -512,5 +545,15 @@ export default function ChatPage() {
                 )}
             </AnimatePresence>
         </div>
+        
+    );
+}
+
+// --- 2. ADDED THE WRAPPER EXPORT HERE ---
+export default function ChatPage() {
+    return (
+        <Suspense fallback={<div className="flex h-screen items-center justify-center text-white">Loading Chat...</div>}>
+            <ChatContent />
+        </Suspense>
     );
 }
