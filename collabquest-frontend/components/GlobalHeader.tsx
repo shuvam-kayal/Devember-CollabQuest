@@ -209,7 +209,7 @@ export default function GlobalHeader() {
             <div className="flex items-center gap-6">
                 
                 {/* Chat */}
-                <button onClick={() => router.push("/chat")} className="relative group">
+                <button id="onboarding-chat" onClick={() => router.push("/chat")} className="relative group">
                     <MessageSquare className="w-5 h-5 text-zinc-400 group-hover:text-white transition-colors" />
                     {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-2.5 h-2.5 bg-blue-500 rounded-full border-2 border-[#0B0E14]"></span>}
                 </button>
