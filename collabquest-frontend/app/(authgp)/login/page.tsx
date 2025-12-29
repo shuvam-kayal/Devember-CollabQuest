@@ -4,7 +4,8 @@ import Link from "next/link";
 import { Github, Mail, Lock, ArrowRight, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import api from "@/lib/api"; // Axios instance with withCredentials: true
+import Cookies from "js-cookie";
+import api from "@/lib/api"; // Ensure you have this file created as discussed
 
 export default function LoginPage() {
   const router = useRouter();
@@ -13,7 +14,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Optional: fallback if env variable is missing
+  // Define this ONCE.
+  // Now you don't have to type process.env... repeatedly in your JSX.
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   const handleEmailLogin = async (e: React.FormEvent) => {
@@ -22,17 +24,20 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // POST request to backend login endpoint
-      const response = await api.post("/auth/login/email", {
-        email,
-        password,
+      // using 'api' instance automatically handles the base URL
+      const response = await api.post("/auth/login/email", { 
+        email, 
+        password 
       });
 
-      // Backend sets HttpOnly cookie, so no need to set it manually
-      // Navigate to dashboard after successful login
+      const data = response.data;
+      // Store token
+      Cookies.set("token", data.token); 
+      
       router.push("/dashboard");
     } catch (err: any) {
       console.error("Login failed", err);
+      // specific error message from backend or fallback
       setError(err.response?.data?.detail || "Invalid credentials.");
     } finally {
       setLoading(false);
@@ -41,7 +46,7 @@ export default function LoginPage() {
 
   return (
     <main className="relative min-h-screen flex items-center justify-center bg-[#050505] text-white overflow-hidden font-sans">
-      {/* Background */}
+      {/* 1. Catchy Background Elements */}
       <div className="absolute inset-0 z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-purple-900/30 blur-[120px] animate-pulse" />
         <div className="absolute bottom-[10%] right-[-5%] w-[40%] h-[40%] rounded-full bg-indigo-900/20 blur-[100px]" />
@@ -49,7 +54,7 @@ export default function LoginPage() {
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-50 contrast-150" />
       </div>
 
-      {/* Login Card */}
+      {/* 2. Glassmorphism Card */}
       <div className="relative z-10 w-full max-w-md p-8 mx-4 bg-gray-900/40 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-12 h-12 bg-purple-600 rounded-xl mb-4 shadow-lg shadow-purple-500/30">
@@ -59,7 +64,7 @@ export default function LoginPage() {
           <p className="text-gray-400 mt-2">Resume your journey and conquer the day.</p>
         </div>
 
-        {/* Social Login Buttons */}
+        {/* 3. Dynamic Social Login Buttons */}
         <div className="grid grid-cols-2 gap-4 mb-8">
           <a
             href={`${API_BASE_URL}/auth/login/github`}
@@ -87,7 +92,7 @@ export default function LoginPage() {
           <span className="relative bg-transparent px-4 text-xs text-gray-500 uppercase tracking-widest">Or login with email</span>
         </div>
 
-        {/* Email Login Form */}
+        {/* 4. Form Inputs */}
         <form onSubmit={handleEmailLogin} className="space-y-5">
           <div className="relative group">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500 group-focus-within:text-purple-500 transition-colors" />
