@@ -24,20 +24,23 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // using 'api' instance automatically handles the base URL
+      // 1. Make the request
       const response = await api.post("/auth/login/email", { 
         email, 
         password 
       });
 
+      // 2. Extract data
       const data = response.data;
-      // Store token
-      Cookies.set("token", data.token); 
+
+      // 3. Store token (FIXED: used 'data.token' instead of 'res.data.token')
+      // Note: Ensure your backend actually returns a field named "token". 
+      // If it returns "access_token", change this to data.access_token
+      Cookies.set("token", data.token, { expires: 7, secure: true, sameSite: "None" });
       
       router.push("/dashboard");
     } catch (err: any) {
       console.error("Login failed", err);
-      // specific error message from backend or fallback
       setError(err.response?.data?.detail || "Invalid credentials.");
     } finally {
       setLoading(false);

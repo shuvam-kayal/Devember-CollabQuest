@@ -165,11 +165,26 @@ function DashboardContent() {
     }
     const fetchDashboardData = async (jwt: string) => {
         try {
-            const taskRes = await api.get("/users/me/tasks");
+            // FIX: We explicitly attach the token to the request headers
+            const config = {
+                headers: { Authorization: `Bearer ${jwt}` }
+            };
+
+            // Pass 'config' as the second argument
+            const taskRes = await api.get("/users/me/tasks", config);
+            
             setActiveTasks(taskRes.data.active);
             setHistoryTasks(taskRes.data.history);
-        } catch (e) { console.error(e); } finally { setTasksLoading(false); }
-    };
+            
+            // If you have other API calls in this function, update them too!
+            // Example: await api.get("/other/endpoint", config);
+
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setTasksLoading(false);
+        }
+    }
 
     // --- ACTIONS ---
     const handleReapply = async (match: Match) => {
