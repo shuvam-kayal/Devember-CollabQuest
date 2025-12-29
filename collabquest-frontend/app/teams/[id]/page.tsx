@@ -8,7 +8,7 @@ import GlobalHeader from "@/components/GlobalHeader";
 import Link from "next/link";
 import {
     Bot, Calendar, Code2, Layers, LayoutDashboard, Loader2, UserPlus, ClipboardList, CheckCircle2, RotateCcw,
-    Sparkles, X, Plus, RefreshCw, Trash2, Check, AlertTriangle, MessageSquare, Mail, ThumbsUp, XCircle, Clock, Send, Edit2, Save, Users, Trophy, Star, Megaphone, Play, LogOut, UserMinus, Timer, CalendarClock
+    Sparkles, X, Plus, RefreshCw, Trash2, Check, AlertTriangle, MessageSquare, Mail, ThumbsUp, XCircle, Clock, Send, Edit2, Save, Users, Trophy, Star, Megaphone, Play, LogOut, UserMinus, Timer, CalendarClock, Search, ExternalLink, Filter
 } from "lucide-react";
 
 const PRESET_SKILLS = ["React", "Python", "Node.js", "TypeScript", "Next.js", "Tailwind", "MongoDB", "Firebase", "Flutter", "Java", "C++", "Rust", "Go", "Figma", "UI/UX", "AI/ML", "Docker", "AWS", "Solidity"];
@@ -41,6 +41,17 @@ interface TaskItem {
 
 interface Suggestions { add: string[]; remove: string[]; }
 interface Candidate { id: string; name: string; avatar: string; contact: string; role: string; status: string; rejected_by?: string; }
+
+// --- ADDED: Search Result Interface ---
+interface SearchResultUser {
+    id: string;
+    _id?: string;
+    username: string;
+    avatar_url: string;
+    skills: { name: string, level: string }[] | string[];
+    match_score: number;
+    has_invited?: boolean; // For UI state
+}
 
 export default function TeamDetails() {
     const params = useParams();
@@ -79,6 +90,13 @@ export default function TeamDetails() {
     const [localSkills, setLocalSkills] = useState<string[]>([]);
     const [dropdownValue, setDropdownValue] = useState("");
 
+    // --- ADDED: Recruit Modal State ---
+    const [showRecruitModal, setShowRecruitModal] = useState(false);
+    const [recruitSearch, setRecruitSearch] = useState("");
+    const [recruitResults, setRecruitResults] = useState<SearchResultUser[]>([]);
+    const [isSearching, setIsSearching] = useState(false);
+    const [recruitSkillFilter, setRecruitSkillFilter] = useState("");
+
     const teamId = params.id as string;
 
     const [tasks, setTasks] = useState<TaskItem[]>([]);
@@ -97,6 +115,13 @@ export default function TeamDetails() {
         window.addEventListener("dashboardUpdate", handleRefresh);
         return () => window.removeEventListener("dashboardUpdate", handleRefresh);
     }, [teamId]);
+
+    // --- ADDED: Auto-refresh search when modal opens ---
+    useEffect(() => {
+        if (showRecruitModal) {
+            handleSearchCandidates();
+        }
+    }, [showRecruitModal]);
 
     const fetchTeamData = async () => {
         try {
@@ -134,6 +159,60 @@ export default function TeamDetails() {
             setCandidates(mapped.filter((c: Candidate) => c.status !== "joined"));
         } catch (e) { }
     }
+
+    // --- ADDED: Search Functionality ---
+    const handleSearchCandidates = async () => {
+        setIsSearching(true);
+        try {
+            const params = new URLSearchParams();
+            params.append("project_id", teamId);
+            params.append("randomize", "true"); // Randomize results for discovery
+            if (recruitSearch) params.append("search", recruitSearch);
+            if (recruitSkillFilter) params.append("skills", recruitSkillFilter);
+            
+            const res = await api.get(`/matches/users?${params.toString()}`);
+            setRecruitResults(res.data.map((u: any) => ({...u, has_invited: false})));
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    // --- ADDED: Like Functionality (Matches Swipe Page Logic) ---
+    const getSafeId = (item: any) => {
+        if (typeof item.id === 'string') return item.id;
+        if (typeof item._id === 'string') return item._id;
+        if (item._id && typeof item._id === 'object' && item._id.$oid) return item._id.$oid;
+        return String(item._id || item.id);
+    }
+
+    const handleLikeUser = async (user: SearchResultUser) => {
+        if (user.has_invited) return; 
+        
+        // Optimistic Update
+        setRecruitResults(prev => prev.map(u => u.id === user.id ? { ...u, has_invited: true } : u));
+
+        try {
+            const safeTargetId = getSafeId(user);
+            const res = await api.post("/matches/swipe", {
+                target_id: safeTargetId,
+                direction: "right",
+                type: "user",
+                related_id: teamId // Explicitly passing team ID
+            });
+            
+            if (res.data.is_match) {
+                alert(`IT'S A MATCH! 🎉\nYou matched with ${user.username}.`);
+                fetchCandidates(teamId); // Refresh candidates list
+            }
+        } catch (e) {
+            console.error("Like failed", e);
+            // Revert on failure
+            setRecruitResults(prev => prev.map(u => u.id === user.id ? { ...u, has_invited: false } : u));
+            alert("Failed to send like. Please try again.");
+        }
+    };
 
     const toggleRecruiting = async () => { const newState = !isRecruiting; setIsRecruiting(newState); try { await api.put(`/teams/${teamId}`, { is_looking_for_members: newState }); } catch (e) { setIsRecruiting(!newState); } }
     const handleStartProject = async () => { if (!confirm("Start the project? This enables task management.")) return; try { await api.put(`/teams/${teamId}`, { status: "active" }); fetchTeamData(); } catch (e) { } }
@@ -242,62 +321,28 @@ export default function TeamDetails() {
     const saveSkills = async () => { try { await api.put(`/teams/${teamId}/skills`, { needed_skills: localSkills }); fetchTeamData(); setIsEditingSkills(false); setSuggestions(null); } catch (err) { } };
 
     const askAiForStack = async () => {
-        // 1. FRONTEND VALIDATION
         const descToCheck = team?.description || "";
-        
         if (!descToCheck.trim()) {
             alert("⚠️ Missing Description\nPlease add a project description so the AI knows what to suggest.");
             return;
         }
-
-        // 2. API CALL
         setIsSuggesting(true); 
         setSuggestions(null);
         try {
-            const res = await api.post("/teams/suggest-stack", { 
-                description: descToCheck, 
-                current_skills: localSkills 
-            });
-            if (res.data && (res.data.add.length > 0 || res.data.remove.length > 0)) {
-                setSuggestions(res.data);
-            }
+            const res = await api.post("/teams/suggest-stack", { description: descToCheck, current_skills: localSkills });
+            if (res.data && (res.data.add.length > 0 || res.data.remove.length > 0)) setSuggestions(res.data);
         } catch (err: any) { 
-            // 3. BACKEND VALIDATION HANDLER
-            // We get the specific error message from the backend (e.g., "Description is too vague")
             const msg = err.response?.data?.detail || "AI Suggestion failed.";
             alert(msg);
-            
-            // REMOVED: console.error(err); 
-            // This prevents the "Request failed with status code 400" from cluttering your console.
-        } finally { 
-            setIsSuggesting(false); 
-        }
+        } finally { setIsSuggesting(false); }
     };
 
     const acceptSuggestion = (type: 'add' | 'remove', skill: string) => { if (type === 'add') addSkill(skill); if (type === 'remove') removeSkill(skill); if (suggestions) setSuggestions({ ...suggestions, [type]: suggestions[type].filter(s => s !== skill) }); };
     const generateRoadmap = async () => {
-        // 1. VALIDATION
-        if (!team?.description?.trim()) {
-            alert("⚠️ Missing Description\nPlease add a detailed project description to generate a roadmap.");
-            return; // Stops the request
-        }
-        if (!team?.needed_skills || team.needed_skills.length === 0) {
-            alert("⚠️ Missing Tech Stack\nPlease add at least one skill/tool to your Tech Stack first.");
-            return; // Stops the request
-        }
-
-        // 2. API CALL
+        if (!team?.description?.trim()) { alert("⚠️ Missing Description\nPlease add a detailed project description to generate a roadmap."); return; }
+        if (!team?.needed_skills || team.needed_skills.length === 0) { alert("⚠️ Missing Tech Stack\nPlease add at least one skill/tool to your Tech Stack first."); return; }
         setIsGenerating(true);
-        try {
-            await api.post(`/teams/${teamId}/roadmap`, {});
-            fetchTeamData();
-        } catch (err: any) {
-            // Show backend error if AI fails (e.g., "Irrelevant description")
-            const msg = err.response?.data?.detail || "Roadmap generation failed.";
-            alert(msg);
-        } finally {
-            setIsGenerating(false);
-        }
+        try { await api.post(`/teams/${teamId}/roadmap`, {}); fetchTeamData(); } catch (err: any) { const msg = err.response?.data?.detail || "Roadmap generation failed."; alert(msg); } finally { setIsGenerating(false); }
     };
 
     if (loading || !team) return <div className="flex h-screen items-center justify-center bg-gray-950 text-white"><Loader2 className="animate-spin" /></div>;
@@ -328,7 +373,17 @@ export default function TeamDetails() {
                         </div>
 
                         <div className="flex flex-col gap-2 items-end">
-                            {isLeader && team.status !== "completed" && (<><Link href={`/matches?type=users&projectId=${team.id}`}><button className="w-full px-6 py-3 bg-white text-black rounded-lg font-bold hover:bg-gray-200 transition flex items-center justify-center gap-2 shadow-lg"><UserPlus className="w-5 h-5 text-purple-600" /> Recruit</button></Link><button onClick={team.chat_group_id ? () => router.push(`/chat?targetId=${team.chat_group_id}`) : createTeamChat} className="w-full px-6 py-3 bg-gray-800 text-blue-400 border border-blue-900 rounded-lg font-bold hover:bg-gray-700 transition flex items-center justify-center gap-2"><MessageSquare className="w-5 h-5" /> {team.chat_group_id ? "Open Team Chat" : "Create Team Chat"}</button></>)}
+                            {/* --- UPDATED: Recruit Button opens modal instead of navigating --- */}
+                            {isLeader && team.status !== "completed" && (
+                                <button 
+                                    onClick={() => setShowRecruitModal(true)} 
+                                    className="w-full px-6 py-3 bg-white text-black rounded-lg font-bold hover:bg-gray-200 transition flex items-center justify-center gap-2 shadow-lg"
+                                >
+                                    <UserPlus className="w-5 h-5 text-purple-600" /> Recruit
+                                </button>
+                            )}
+                            
+                            {isLeader && team.status !== "completed" && (<><button onClick={team.chat_group_id ? () => router.push(`/chat?targetId=${team.chat_group_id}`) : createTeamChat} className="w-full px-6 py-3 bg-gray-800 text-blue-400 border border-blue-900 rounded-lg font-bold hover:bg-gray-700 transition flex items-center justify-center gap-2"><MessageSquare className="w-5 h-5" /> {team.chat_group_id ? "Open Team Chat" : "Create Team Chat"}</button></>)}
                             {isLeader && team.status !== "completed" && (<>{team.status === 'planning' ? (<button onClick={handleStartProject} className="w-full px-6 py-3 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-500 transition flex items-center justify-center gap-2 shadow-lg mt-2 animate-pulse"><Play className="w-5 h-5" /> Start Project</button>) : (team.status === 'active' && <button disabled className="w-full px-6 py-3 bg-green-500/20 text-green-400 border border-green-500/50 rounded-lg font-bold flex items-center justify-center gap-2 mt-2 cursor-default"><CheckCircle2 className="w-5 h-5" /> Project Online</button>)}</>)}
                             {team.status === "completed" && team.chat_group_id && <button onClick={() => router.push(`/chat?targetId=${team.chat_group_id}`)} className="w-full px-6 py-3 bg-gray-800 text-blue-400 border border-blue-900 rounded-lg font-bold hover:bg-gray-700 transition flex items-center justify-center gap-2"><MessageSquare className="w-5 h-5" /> Team Chat</button>}
                             {!isMember && (<button onClick={likeProject} disabled={team.has_liked} className={`w-full px-6 py-3 rounded-lg font-bold transition flex items-center justify-center gap-2 shadow-lg ${team.has_liked ? 'bg-gray-800 text-gray-500 cursor-not-allowed' : 'bg-purple-600 text-white hover:bg-purple-500'}`}><ThumbsUp className="w-5 h-5" /> {team.has_liked ? "Interest Sent" : "I'm Interested"}</button>)}
@@ -336,6 +391,7 @@ export default function TeamDetails() {
                         </div>
                     </div>
 
+                    {/* Tech Stack & Team Members */}
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div className="md:col-span-2 bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
                             <div className="flex justify-between items-center mb-4"><h3 className="font-bold flex items-center gap-2"><Code2 className="text-purple-400 w-5 h-5" /> Tech Stack</h3>{isLeader && !isEditingSkills && <button onClick={() => setIsEditingSkills(true)} className="text-xs text-purple-400 hover:text-purple-300 font-mono border border-purple-500/30 px-3 py-1 rounded">Edit Stack</button>}{isEditingSkills && <div className="flex gap-2"><button onClick={askAiForStack} disabled={isSuggesting} className="text-xs bg-blue-600 text-white px-3 py-1 rounded flex gap-1">{isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} AI</button><button onClick={saveSkills} className="text-xs bg-green-600 text-white px-3 py-1 rounded">Save</button></div>}</div>
@@ -357,11 +413,13 @@ export default function TeamDetails() {
                     </div>
                 )}
 
+                {/* --- EXECUTION ROADMAP --- */}
                 <div className="space-y-6 mb-12">
                     <div className="flex items-center justify-between"><h2 className="text-2xl font-bold flex items-center gap-3"><Calendar className="text-purple-500" /> Execution Roadmap</h2>{isLeader && team.project_roadmap && team.project_roadmap.phases && <button onClick={generateRoadmap} disabled={isGenerating} className="text-xs flex items-center gap-2 text-gray-400 hover:text-white transition">{isGenerating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Regenerate</button>}</div>
                     {!team.project_roadmap || !team.project_roadmap.phases ? <div className="text-center py-20 bg-gray-900/30 rounded-3xl border border-gray-800/50"><Bot className="w-16 h-16 mx-auto text-gray-700 mb-4" /><p className="text-gray-500 mb-6">No roadmap yet.</p>{isLeader ? <button onClick={generateRoadmap} disabled={isGenerating} className="px-8 py-4 bg-purple-600 hover:bg-purple-700 rounded-full font-bold transition flex items-center gap-2 mx-auto">{isGenerating ? <Loader2 className="animate-spin" /> : <Sparkles className="w-5 h-5" />} Generate Plan</button> : <p className="text-sm text-gray-600">Waiting for team leader to generate plan.</p>}</div> : <div className="relative border-l-2 border-gray-800 ml-4 space-y-12 pb-12">{team.project_roadmap.phases.map((phase: any, i: number) => <motion.div key={i} initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.2 }} className="relative pl-10"><div className="absolute -left-[9px] top-0 w-4 h-4 bg-purple-500 rounded-full border-4 border-gray-950 shadow-[0_0_10px_rgba(168,85,247,0.5)]"></div><div className="mb-2 flex items-center gap-3"><span className="text-purple-400 font-bold font-mono text-lg">Week {phase.week}</span><span className="text-gray-600">|</span><h3 className="text-xl font-semibold text-white">{phase.goal}</h3></div><div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">{phase.tasks.map((task: any, j: number) => <div key={j} className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex gap-4 hover:border-gray-700 transition"><div className="mt-1">{task.role.toLowerCase().includes('front') ? <LayoutDashboard className="w-5 h-5 text-blue-400" /> : task.role.toLowerCase().includes('back') ? <Code2 className="w-5 h-5 text-green-400" /> : <Layers className="w-5 h-5 text-orange-400" />}</div><div><span className="text-xs font-mono text-gray-500 uppercase tracking-wider block mb-1">{task.role}</span><p className="text-gray-300 text-sm leading-relaxed">{task.task}</p></div></div>)}</div></motion.div>)}</div>}
                 </div>
 
+                {/* --- PROJECT WORKFLOW --- */}
                 {team.status !== 'planning' && team.status !== 'completed' && (
                     <div className="mb-12">
                         <h2 className="text-2xl font-bold mb-6 flex items-center gap-2"><ClipboardList className="text-blue-400" /> Project Workflow</h2>
@@ -429,7 +487,7 @@ export default function TeamDetails() {
                     </div>
                 )}
 
-                {/* --- MERGED RATING UI --- */}
+                {/* --- RATING UI --- */}
                 {team.status === 'completed' && (
                     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-gradient-to-br from-yellow-900/20 via-gray-900 to-purple-900/20 border border-yellow-500/30 p-8 rounded-[2.5rem] text-center shadow-2xl space-y-6">
                         <div className="inline-block p-4 bg-yellow-500/20 rounded-full shadow-[0_0_20px_rgba(234,179,8,0.2)]"><Trophy className="w-12 h-12 text-yellow-400" /></div>
@@ -467,6 +525,146 @@ export default function TeamDetails() {
             <AnimatePresence>{showEmailModal && emailRecipient && (<div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-gray-900 border border-gray-800 p-8 rounded-2xl w-full max-w-md relative"><div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Mail className="w-5 h-5" /> Send Secure Message</h2><button onClick={() => setShowEmailModal(false)}><X className="text-gray-500 hover:text-white" /></button></div><div className="space-y-4 mt-4"><div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400">To: <span className="text-white font-bold">{emailRecipient.name}</span> (Email Hidden)</div><input className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 outline-none focus:border-green-500" placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} /><textarea className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 h-32 outline-none focus:border-green-500 resize-none" placeholder="Message" value={emailBody} onChange={e => setEmailBody(e.target.value)} /><button onClick={handleSendEmail} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"><Send className="w-4 h-4" /> Send Message</button></div></motion.div></div>)}</AnimatePresence>
             <AnimatePresence>{showExplainModal && (<div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#111] border border-white/10 p-10 rounded-[3rem] w-full max-w-md"><h2 className="text-2xl font-black mb-4">{actionType === "leave" ? "Confirm Departure" : "Confirm Removal"}</h2><textarea className="w-full bg-black border border-white/10 rounded-2xl p-5 h-32 mb-10 outline-none focus:border-red-500 transition-all resize-none text-sm" placeholder="Reason..." value={explanation} onChange={e => setExplanation(e.target.value)} /><div className="flex gap-4"><button onClick={handleConfirmAction} className="flex-1 bg-red-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-red-500/20">Finalize</button><button onClick={() => setShowExplainModal(false)} className="flex-1 bg-white/5 py-4 rounded-2xl font-black text-xs uppercase tracking-widest">Go Back</button></div></motion.div></div>)}</AnimatePresence>
             <AnimatePresence>{showExtensionModal && (<div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"><motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#111] border border-white/10 p-10 rounded-[3rem] w-full max-w-md shadow-2xl"><h2 className="text-2xl font-black tracking-tight mb-4">Extend Deadline</h2><p className="text-gray-500 text-sm mb-10 leading-relaxed">Requesting an extension will require a team vote.</p><input type="datetime-local" className="w-full bg-black border border-white/10 rounded-2xl p-4 text-white mb-10 outline-none focus:border-blue-500 transition-all" style={{ colorScheme: 'dark' }} value={extensionDate} onChange={e => setExtensionDate(e.target.value)} /><div className="flex gap-4"><button onClick={confirmExtensionRequest} className="flex-1 bg-blue-600 py-4 rounded-2xl font-black text-xs uppercase tracking-widest shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500">Submit Request</button><button onClick={() => setShowExtensionModal(false)} className="flex-1 bg-white/5 py-4 rounded-2xl font-black text-xs uppercase tracking-widest">Cancel</button></div></motion.div></div>)}</AnimatePresence>
+
+            {/* --- ADDED: RECRUIT MODAL --- */}
+            <AnimatePresence>
+                {showRecruitModal && (
+                    <div className="fixed inset-0 bg-black/90 flex items-center justify-center z-50 p-4 backdrop-blur-md">
+                        <motion.div 
+                            initial={{ scale: 0.95, opacity: 0 }} 
+                            animate={{ scale: 1, opacity: 1 }} 
+                            exit={{ scale: 0.95, opacity: 0 }}
+                            className="bg-gray-900 border border-gray-800 w-full max-w-3xl rounded-[2rem] shadow-2xl flex flex-col max-h-[90vh]"
+                        >
+                            <div className="p-6 border-b border-gray-800 flex justify-between items-center bg-gray-950/50 rounded-t-[2rem]">
+                                <div>
+                                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                                        <UserPlus className="w-6 h-6 text-purple-500" /> Recruit Talent
+                                    </h2>
+                                    <p className="text-gray-400 text-sm mt-1">Find the perfect teammates for <strong>{team.name}</strong></p>
+                                </div>
+                                <button onClick={() => setShowRecruitModal(false)} className="p-2 hover:bg-gray-800 rounded-full transition">
+                                    <X className="w-6 h-6 text-gray-400" />
+                                </button>
+                            </div>
+
+                            <div className="p-6 border-b border-gray-800 bg-gray-900">
+                                <button 
+                                    onClick={() => router.push(`/matches?type=users&projectId=${teamId}`)}
+                                    className="w-full mb-6 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white p-4 rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                                >
+                                    <Sparkles className="w-6 h-6 text-yellow-300" /> 
+                                    Launch Smart Finder (Swipe Mode)
+                                </button>
+                                
+                                <div className="flex items-center gap-2 mb-3">
+                                   <span className="text-xs font-bold uppercase text-gray-500 tracking-wider">Or search manually:</span>
+                                   <div className="h-px bg-gray-800 flex-1"></div>
+                                </div>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="relative">
+                                        <Search className="absolute left-3 top-3 w-5 h-5 text-gray-500" />
+                                        <input 
+                                            className="w-full bg-black border border-gray-800 rounded-xl py-3 pl-10 pr-4 outline-none focus:border-purple-500 transition text-sm"
+                                            placeholder="Search by username..."
+                                            value={recruitSearch}
+                                            onChange={(e) => setRecruitSearch(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && handleSearchCandidates()}
+                                        />
+                                    </div>
+                                    <div className="relative">
+                                        <Filter className="absolute left-3 top-3 w-5 h-5 text-gray-500" />
+                                        <select
+                                            className="w-full bg-black border border-gray-800 rounded-xl py-3 pl-10 pr-4 outline-none focus:border-purple-500 transition text-sm appearance-none text-gray-300"
+                                            value={recruitSkillFilter}
+                                            onChange={(e) => setRecruitSkillFilter(e.target.value)}
+                                        >
+                                            <option value="">Filter by Skill...</option>
+                                            {PRESET_SKILLS.map(skill => (
+                                                <option key={skill} value={skill}>{skill}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="md:col-span-2 flex justify-end">
+                                        <button 
+                                            onClick={handleSearchCandidates}
+                                            className="bg-gray-800 hover:bg-gray-700 text-white px-6 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition border border-gray-700"
+                                        >
+                                            {isSearching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                                            Search
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-[#0a0a0a]">
+                                {isSearching ? (
+                                    <div className="flex flex-col items-center justify-center py-20 text-gray-500">
+                                        <Loader2 className="w-10 h-10 animate-spin mb-4 text-purple-500" />
+                                        <p>Searching for talent...</p>
+                                    </div>
+                                ) : recruitResults.length === 0 ? (
+                                    <div className="text-center py-20 text-gray-600">
+                                        <UserPlus className="w-12 h-12 mx-auto mb-4 opacity-20" />
+                                        <p>No candidates found matching your criteria.</p>
+                                    </div>
+                                ) : (
+                                    recruitResults.map((user) => (
+                                        <div key={user.id} className="bg-gray-900 border border-gray-800 p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 hover:border-gray-700 transition group">
+                                            {/* Profile Link Area */}
+                                            <Link href={`/profile/${user.id}`} target="_blank" className="flex items-center gap-4 w-full md:w-auto flex-1 cursor-pointer">
+                                                <img 
+                                                    src={user.avatar_url || "https://github.com/shadcn.png"} 
+                                                    className="w-12 h-12 rounded-full border border-gray-800"
+                                                />
+                                                <div>
+                                                    <div className="flex items-center gap-2">
+                                                        <h4 className="font-bold text-white text-lg hover:text-purple-400 transition">{user.username}</h4>
+                                                        <span className="text-xs bg-purple-900/30 text-purple-400 px-2 py-0.5 rounded border border-purple-500/20 font-mono">
+                                                            {user.match_score}% Match
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex flex-wrap gap-1 mt-1">
+                                                        {Array.isArray(user.skills) && user.skills.slice(0, 4).map((s: any, idx: number) => (
+                                                            <span key={idx} className="text-[10px] bg-gray-800 text-gray-400 px-2 py-0.5 rounded-full">
+                                                                {typeof s === 'string' ? s : s.name}
+                                                            </span>
+                                                        ))}
+                                                        {Array.isArray(user.skills) && user.skills.length > 4 && <span className="text-[10px] text-gray-500">+{user.skills.length - 4}</span>}
+                                                    </div>
+                                                </div>
+                                            </Link>
+                                            
+                                            <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                                                <Link href={`/profile/${user.id}`} target="_blank">
+                                                    <button className="p-2 text-gray-500 hover:text-white transition" title="View Profile">
+                                                        <ExternalLink className="w-5 h-5" />
+                                                    </button>
+                                                </Link>
+                                                
+                                                {/* FIXED: Like Button logic matches Swipe page */}
+                                                <button 
+                                                    onClick={() => handleLikeUser(user)}
+                                                    disabled={user.has_invited}
+                                                    className={`px-5 py-2 rounded-lg font-bold text-sm flex items-center gap-2 transition shadow-lg ${
+                                                        user.has_invited 
+                                                        ? "bg-gray-800 text-gray-400 cursor-not-allowed border border-gray-700"
+                                                        : "bg-purple-600 hover:bg-purple-500 text-white shadow-purple-900/20"
+                                                    }`}
+                                                >
+                                                    {user.has_invited ? <Check className="w-4 h-4" /> : <ThumbsUp className="w-4 h-4" />}
+                                                    {user.has_invited ? "Liked" : "Like"}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </motion.div>
+                    </div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }

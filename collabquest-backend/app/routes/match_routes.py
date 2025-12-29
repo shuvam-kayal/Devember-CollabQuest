@@ -7,6 +7,7 @@ from app.auth.dependencies import get_current_user
 from app.services.matching_service import calculate_project_match, calculate_user_compatibility, calculate_match_score
 from beanie.operators import Or
 import traceback
+import random
 
 router = APIRouter()
 
@@ -108,40 +109,53 @@ async def match_projects_for_user(
     return scored_projects
 
 @router.get("/users")
-async def match_teammates_for_user(project_id: Optional[str] = None, current_user: User = Depends(get_current_user)):
+async def match_teammates_for_user(
+    project_id: Optional[str] = None, 
+    search: Optional[str] = None,
+    skills: Optional[List[str]] = Query(None),
+    interests: Optional[List[str]] = Query(None),
+    randomize: bool = False, # <--- CONTROL FLAG (Default False = Sorted)
+    current_user: User = Depends(get_current_user)
+):
     all_users = await User.find_all().to_list()
     exclude_ids = {str(current_user.id)}
     
     target_project = None
     existing_members_objects = []
 
-    # 1. Context Setup & Exclusion
     if project_id:
         target_project = await Team.get(project_id)
         if target_project:
             for member_id in target_project.members:
                 exclude_ids.add(member_id)
-                # Fetch member object for availability calculation later
                 m_user = await User.get(member_id)
                 if m_user: existing_members_objects.append(m_user)
     else:
-        # Fallback: exclude members from all my teams if no specific project context
         my_teams = await Team.find(Team.members == str(current_user.id)).to_list()
         for team in my_teams:
             for member_id in team.members:
                 exclude_ids.add(member_id)
 
-    # 2. Filter Candidates
-    candidates = [
-        u for u in all_users 
-        if str(u.id) not in exclude_ids 
-        and u.is_looking_for_team is True # Explicitly check visibility
-    ]
+    candidates = []
+    search_lower = search.lower() if search else None
+    
+    for u in all_users:
+        if str(u.id) in exclude_ids: continue
+        if not u.is_looking_for_team: continue
+        if search_lower and search_lower not in u.username.lower(): continue
+        if skills:
+            user_skills = set(s.name.lower() for s in u.skills)
+            req_skills = set(s.lower() for s in skills)
+            if not user_skills.intersection(req_skills): continue
+        if interests:
+            user_interests = set(i.lower() for i in u.interests)
+            req_interests = set(i.lower() for i in interests)
+            if not user_interests.intersection(req_interests): continue
+        candidates.append(u)
 
     scored_users = []
     for candidate in candidates:
         if target_project:
-            # USE ADVANCED CALCULATOR (Semantic + Availability)
             score = await calculate_match_score(candidate, target_project, existing_members_objects)
         else:
             score = await calculate_user_compatibility(current_user, candidate)
@@ -152,7 +166,12 @@ async def match_teammates_for_user(project_id: Optional[str] = None, current_use
         user_dict["match_score"] = score
         scored_users.append(user_dict)
             
-    scored_users.sort(key=lambda x: x["match_score"], reverse=True)
+    # --- LOGIC SWITCH ---
+    if randomize:
+        random.shuffle(scored_users) # For Recruit Search (Discovery)
+    else:
+        scored_users.sort(key=lambda x: x["match_score"], reverse=True) # For Smart Finder (Best Fit First)
+        
     return scored_users
 
 
