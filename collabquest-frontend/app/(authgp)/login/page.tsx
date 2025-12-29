@@ -33,12 +33,15 @@ export default function LoginPage() {
       // 2. Extract data
       const data = response.data;
 
-      // 3. Store token (FIXED: used 'data.token' instead of 'res.data.token')
-      // Note: Ensure your backend actually returns a field named "token". 
-      // If it returns "access_token", change this to data.access_token
-      Cookies.set("token", data.token, { expires: 7, secure: true, sameSite: "None" });
-      
-      router.push("/dashboard");
+// FIX: Add 'secure: true' and 'sameSite: "None"'
+// These are REQUIRED for cookies to work when frontend/backend are on different domains (e.g., Vercel & Render)
+Cookies.set("token", data.token, { 
+  expires: 7, 
+  secure: true,      // Required for HTTPS (Production)
+  sameSite: 'None'   // Required for Cross-Site usage
+});
+
+router.push("/dashboard");
     } catch (err: any) {
       console.error("Login failed", err);
       setError(err.response?.data?.detail || "Invalid credentials.");
