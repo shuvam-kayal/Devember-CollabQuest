@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
 from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, Team, VisibilitySettings, Notification
@@ -50,98 +50,193 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
     
     return current_user
 
-@router.get("/search", response_model=List[User])
-async def search_users(query: str, current_user: User = Depends(get_current_user)):
-    """Search for users by username or email"""
-    if not query or len(query) < 2: return []
-    users = await User.find(
-        Or(
-            User.username == {"$regex": query, "$options": "i"},
-            User.email == {"$regex": query, "$options": "i"}
-        )
-    ).limit(10).to_list()
-    # Exclude self
-    return [u for u in users if str(u.id) != str(current_user.id)]
-
-@router.get("/me/connections_details")
-async def get_my_connections_details(current_user: User = Depends(get_current_user)):
-    """Returns a combined list of explicit connections and current team members"""
-    # 1. Fetch team members
-    team_members = set()
-    teams = await Team.find(Team.members == str(current_user.id)).to_list()
+@router.get("/network", response_model=List[User])
+async def get_my_network(current_user: User = Depends(get_current_user)):
+    """Fetches users connected via Teams or accepted Chat requests"""
+    # Verify current_user.id is a string
+    my_id = str(current_user.id)
+    
+    # Fetch teams where the user is a member
+    teams = await Team.find(Team.members == my_id).to_list()
+    
+    connected_ids = set()
     for t in teams:
         for m in t.members:
-            if m != str(current_user.id): team_members.add(m)
-            
-    # 2. Fetch explicit connections
-    explicit = set(current_user.connections)
+            if m != my_id:
+                connected_ids.add(m)
     
-    all_ids = list(team_members.union(explicit))
-    
-    # Filter valid ObjectIds
-    valid_ids = [ObjectId(i) for i in all_ids if ObjectId.is_valid(i)]
-    
+    # Add manual connections (chat requests)
+    if current_user.accepted_chat_requests:
+        for c in current_user.accepted_chat_requests:
+            connected_ids.add(c)
+        
+    if not connected_ids: 
+        return []
+        
+    valid_ids = [ObjectId(uid) for uid in connected_ids if ObjectId.is_valid(uid)]
     users = await User.find({"_id": {"$in": valid_ids}}).to_list()
     return users
 
-@router.post("/connection/request/{target_id}")
-async def request_connection(target_id: str, current_user: User = Depends(get_current_user)):
-    if target_id == str(current_user.id): raise HTTPException(400, "Cannot connect with self")
+@router.get("/search", response_model=List[dict])
+async def search_users_directory(query: Optional[str] = None, skill: Optional[str] = None, current_user: User = Depends(get_current_user)):
+    """Searches all users and flags those already connected"""
+    teams = await Team.find(Team.members == str(current_user.id)).to_list()
+    connected_ids = set(current_user.accepted_chat_requests)
+    for t in teams:
+        for m in t.members:
+            connected_ids.add(m)
+
+    all_users = await User.find_all().to_list()
+    results = []
+    q_lower = query.lower() if query else ""
+    s_lower = skill.lower() if skill else ""
     
+    for u in all_users:
+        if str(u.id) == str(current_user.id): continue
+        match_q = True
+        if q_lower:
+            match_q = q_lower in u.username.lower() or (u.full_name and q_lower in u.full_name.lower())
+        match_s = True
+        if s_lower:
+            match_s = any(s_lower in s.name.lower() for s in u.skills)
+            
+        if match_q and match_s:
+            is_conn = str(u.id) in connected_ids
+            # Check for pending request status
+            pending = await Notification.find_one(
+                Notification.recipient_id == str(u.id), 
+                Notification.sender_id == str(current_user.id),
+                Notification.type == "connection_request",
+                Notification.action_status == "pending"
+            )
+            
+            results.append({
+                "id": str(u.id),
+                "username": u.username,
+                "full_name": u.full_name,
+                "avatar_url": u.avatar_url,
+                "skills": u.skills,
+                "is_connected": is_conn,
+                "request_sent": bool(pending)
+            })
+    return results
+
+@router.post("/connection-request/{target_id}")
+async def send_connection_request(target_id: str, current_user: User = Depends(get_current_user)):
+    if not ObjectId.is_valid(target_id): raise HTTPException(400, "Invalid ID")
     target = await User.get(target_id)
     if not target: raise HTTPException(404, "User not found")
-    
-    uid = str(current_user.id)
-    
-    # Check if already connected or pending
-    if uid in target.connections: return {"status": "already_connected"}
-    if uid in target.connection_requests_received: return {"status": "pending"}
-    
-    target.connection_requests_received.append(uid)
-    await target.save()
-    
-    current_user.connection_requests_sent.append(target_id)
-    await current_user.save()
-    
-    # Send Notification
+        
+    existing = await Notification.find_one(
+        Notification.recipient_id == target_id, 
+        Notification.sender_id == str(current_user.id),
+        Notification.type == "connection_request",
+        Notification.action_status == "pending"
+    )
+    if existing: return {"status": "already_sent"}
+
     await Notification(
         recipient_id=target_id,
-        sender_id=uid,
-        message=f"{current_user.username} sent you a connection request.",
+        sender_id=str(current_user.id),
+        message=f"{current_user.username} wants to add you to their network.",
         type="connection_request",
-        related_id=uid
+        related_id=str(current_user.id),
+        action_status="pending"
     ).insert()
-    
     return {"status": "sent"}
 
-@router.post("/connection/accept/{requester_id}")
-async def accept_connection(requester_id: str, current_user: User = Depends(get_current_user)):
-    requester = await User.get(requester_id)
-    if not requester: raise HTTPException(404, "User not found")
+# --- REQUEST MANAGEMENT ---
+
+@router.get("/requests/received", response_model=List[dict])
+async def get_received_requests(current_user: User = Depends(get_current_user)):
+    notifs = await Notification.find(
+        Notification.recipient_id == str(current_user.id),
+        Notification.type == "connection_request",
+        Notification.action_status == "pending"
+    ).to_list()
     
-    uid = str(current_user.id)
+    results = []
+    for n in notifs:
+        sender = await User.get(n.sender_id)
+        if sender:
+            # FIX: Manually Convert to Dict and ensure ID is string to prevent Pydantic Error
+            sender_dict = sender.dict()
+            sender_dict["id"] = str(sender.id)
+            if "_id" in sender_dict: sender_dict["_id"] = str(sender.id)
+            
+            results.append({
+                "request_id": str(n.id),
+                "user": sender_dict,
+                "created_at": n.created_at
+            })
+    return results
+
+@router.get("/requests/sent", response_model=List[dict])
+async def get_sent_requests(current_user: User = Depends(get_current_user)):
+    notifs = await Notification.find(
+        Notification.sender_id == str(current_user.id),
+        Notification.type == "connection_request",
+        Notification.action_status == "pending"
+    ).to_list()
     
-    if requester_id in current_user.connection_requests_received:
-        current_user.connection_requests_received.remove(requester_id)
-        current_user.connections.append(requester_id)
-        await current_user.save()
+    results = []
+    for n in notifs:
+        recipient = await User.get(n.recipient_id)
+        if recipient:
+            # FIX: Manually Convert to Dict and ensure ID is string
+            recipient_dict = recipient.dict()
+            recipient_dict["id"] = str(recipient.id)
+            if "_id" in recipient_dict: recipient_dict["_id"] = str(recipient.id)
+
+            results.append({
+                "request_id": str(n.id),
+                "user": recipient_dict,
+                "created_at": n.created_at
+            })
+    return results
+
+@router.post("/requests/{request_id}/accept")
+async def accept_connection_request(request_id: str, current_user: User = Depends(get_current_user)):
+    if not ObjectId.is_valid(request_id): raise HTTPException(400, "Invalid ID")
+    notif = await Notification.get(request_id)
+    if not notif or notif.recipient_id != str(current_user.id):
+        raise HTTPException(404, "Request not found")
         
-        if uid in requester.connection_requests_sent:
-            requester.connection_requests_sent.remove(uid)
-        requester.connections.append(uid)
-        await requester.save()
+    sender = await User.get(notif.sender_id)
+    if sender:
+        if notif.sender_id not in current_user.accepted_chat_requests:
+            current_user.accepted_chat_requests.append(notif.sender_id)
+            await current_user.save()
+            
+        if str(current_user.id) not in sender.accepted_chat_requests:
+            sender.accepted_chat_requests.append(str(current_user.id))
+            await sender.save()
+            
+        notif.action_status = "accepted"
+        notif.is_read = True
+        await notif.save()
         
         await Notification(
-            recipient_id=requester_id,
-            sender_id=uid,
-            message=f"{current_user.username} accepted your connection request!",
-            type="connection_accept",
-            related_id=uid
+            recipient_id=notif.sender_id,
+            sender_id=str(current_user.id),
+            message=f"{current_user.username} accepted your connection request.",
+            type="info"
         ).insert()
         
         return {"status": "accepted"}
+    raise HTTPException(404, "Sender user not found")
+
+@router.post("/requests/{request_id}/reject")
+async def reject_connection_request(request_id: str, current_user: User = Depends(get_current_user)):
+    if not ObjectId.is_valid(request_id): raise HTTPException(400, "Invalid ID")
+    notif = await Notification.get(request_id)
+    if not notif or notif.recipient_id != str(current_user.id):
+        raise HTTPException(404, "Request not found")
         
-    return {"status": "error", "message": "No request found"}
+    notif.action_status = "rejected"
+    notif.is_read = True
+    await notif.save()
+    return {"status": "rejected"}
 
 @router.get("/{user_id}/compatibility")
 async def get_user_compatibility_score(user_id: str, current_user: User = Depends(get_current_user)):
