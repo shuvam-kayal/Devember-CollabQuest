@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from datetime import datetime
 import uuid 
 
-# --- HELPER MODELS ---
+# ... [Keep all Helper Models: TimeRange, DayAvailability, Skill, Link, Achievement, ConnectedAccounts, Rating] ...
 class TimeRange(BaseModel):
     start: str 
     end: str 
@@ -68,7 +68,7 @@ class VisibilitySettings(BaseModel):
     ratings: bool = True
     email: bool = False
 
-# --- VOTING & REQUEST MODELS ---
+# ... [Keep Voting Models: DeletionRequest, CompletionRequest, MemberRequest, ExtensionRequest] ...
 class DeletionRequest(BaseModel):
     is_active: bool = False
     initiator_id: str
@@ -141,10 +141,16 @@ class User(Document):
 
     accepted_chat_requests: List[str] = []
     favorites: List[str] = [] 
-    embedding: List[float] = [] 
+    embedding: List[float] = []
+    
+    # --- NEW FIELDS FOR CONNECTIONS ---
+    connections: List[str] = [] # List of User IDs
+    connection_requests_received: List[str] = [] # List of User IDs
+    connection_requests_sent: List[str] = [] # List of User IDs
     
     class Settings: name = "users"
 
+# ... [Keep UnreadCount, Task, Team, Block, Swipe, Match, Notification, Attachment, Message, ChatGroup, Question] ...
 class UnreadCount(Document):
     user_id: str
     target_id: str 

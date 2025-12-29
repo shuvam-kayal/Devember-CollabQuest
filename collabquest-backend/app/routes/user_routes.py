@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel
-from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, Team, VisibilitySettings
+from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, Team, VisibilitySettings, Notification
 from app.auth.dependencies import get_current_user
 from app.services.vector_store import generate_embedding
-from app.services.matching_service import calculate_user_compatibility
 from app.auth.utils import fetch_codeforces_stats, fetch_leetcode_stats, update_trust_score
+from app.services.matching_service import calculate_user_compatibility
+from beanie.operators import Or
 from bson import ObjectId
 from datetime import datetime
 
@@ -48,6 +49,99 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
         await current_user.save()
     
     return current_user
+
+@router.get("/search", response_model=List[User])
+async def search_users(query: str, current_user: User = Depends(get_current_user)):
+    """Search for users by username or email"""
+    if not query or len(query) < 2: return []
+    users = await User.find(
+        Or(
+            User.username == {"$regex": query, "$options": "i"},
+            User.email == {"$regex": query, "$options": "i"}
+        )
+    ).limit(10).to_list()
+    # Exclude self
+    return [u for u in users if str(u.id) != str(current_user.id)]
+
+@router.get("/me/connections_details")
+async def get_my_connections_details(current_user: User = Depends(get_current_user)):
+    """Returns a combined list of explicit connections and current team members"""
+    # 1. Fetch team members
+    team_members = set()
+    teams = await Team.find(Team.members == str(current_user.id)).to_list()
+    for t in teams:
+        for m in t.members:
+            if m != str(current_user.id): team_members.add(m)
+            
+    # 2. Fetch explicit connections
+    explicit = set(current_user.connections)
+    
+    all_ids = list(team_members.union(explicit))
+    
+    # Filter valid ObjectIds
+    valid_ids = [ObjectId(i) for i in all_ids if ObjectId.is_valid(i)]
+    
+    users = await User.find({"_id": {"$in": valid_ids}}).to_list()
+    return users
+
+@router.post("/connection/request/{target_id}")
+async def request_connection(target_id: str, current_user: User = Depends(get_current_user)):
+    if target_id == str(current_user.id): raise HTTPException(400, "Cannot connect with self")
+    
+    target = await User.get(target_id)
+    if not target: raise HTTPException(404, "User not found")
+    
+    uid = str(current_user.id)
+    
+    # Check if already connected or pending
+    if uid in target.connections: return {"status": "already_connected"}
+    if uid in target.connection_requests_received: return {"status": "pending"}
+    
+    target.connection_requests_received.append(uid)
+    await target.save()
+    
+    current_user.connection_requests_sent.append(target_id)
+    await current_user.save()
+    
+    # Send Notification
+    await Notification(
+        recipient_id=target_id,
+        sender_id=uid,
+        message=f"{current_user.username} sent you a connection request.",
+        type="connection_request",
+        related_id=uid
+    ).insert()
+    
+    return {"status": "sent"}
+
+@router.post("/connection/accept/{requester_id}")
+async def accept_connection(requester_id: str, current_user: User = Depends(get_current_user)):
+    requester = await User.get(requester_id)
+    if not requester: raise HTTPException(404, "User not found")
+    
+    uid = str(current_user.id)
+    
+    if requester_id in current_user.connection_requests_received:
+        current_user.connection_requests_received.remove(requester_id)
+        current_user.connections.append(requester_id)
+        await current_user.save()
+        
+        if uid in requester.connection_requests_sent:
+            requester.connection_requests_sent.remove(uid)
+        requester.connections.append(uid)
+        await requester.save()
+        
+        await Notification(
+            recipient_id=requester_id,
+            sender_id=uid,
+            message=f"{current_user.username} accepted your connection request!",
+            type="connection_accept",
+            related_id=uid
+        ).insert()
+        
+        return {"status": "accepted"}
+        
+    return {"status": "error", "message": "No request found"}
 
 @router.get("/{user_id}/compatibility")
 async def get_user_compatibility_score(user_id: str, current_user: User = Depends(get_current_user)):
