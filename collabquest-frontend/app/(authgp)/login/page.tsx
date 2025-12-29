@@ -4,8 +4,7 @@ import Link from "next/link";
 import { Github, Mail, Lock, ArrowRight, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import Cookies from "js-cookie";
-import api from "@/lib/api"; // Ensure you have this file created as discussed
+import api from "@/lib/api"; // Axios instance with withCredentials: true
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,8 +13,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  // Define this ONCE.
-  // Now you don't have to type process.env... repeatedly in your JSX.
+  // Optional: fallback if env variable is missing
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
   const handleEmailLogin = async (e: React.FormEvent) => {
@@ -24,24 +22,15 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // 1. Make the request
-      const response = await api.post("/auth/login/email", { 
-        email, 
-        password 
+      // POST request to backend login endpoint
+      const response = await api.post("/auth/login/email", {
+        email,
+        password,
       });
 
-      // 2. Extract data
-      const data = response.data;
-
-// FIX: Add 'secure: true' and 'sameSite: "None"'
-// These are REQUIRED for cookies to work when frontend/backend are on different domains (e.g., Vercel & Render)
-Cookies.set("token", data.token, { 
-  expires: 7, 
-  secure: true,      // Required for HTTPS (Production)
-  sameSite: 'None'   // Required for Cross-Site usage
-});
-
-router.push("/dashboard");
+      // Backend sets HttpOnly cookie, so no need to set it manually
+      // Navigate to dashboard after successful login
+      router.push("/dashboard");
     } catch (err: any) {
       console.error("Login failed", err);
       setError(err.response?.data?.detail || "Invalid credentials.");
@@ -52,7 +41,7 @@ router.push("/dashboard");
 
   return (
     <main className="relative min-h-screen flex items-center justify-center bg-[#050505] text-white overflow-hidden font-sans">
-      {/* 1. Catchy Background Elements */}
+      {/* Background */}
       <div className="absolute inset-0 z-0">
         <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full bg-purple-900/30 blur-[120px] animate-pulse" />
         <div className="absolute bottom-[10%] right-[-5%] w-[40%] h-[40%] rounded-full bg-indigo-900/20 blur-[100px]" />
@@ -60,7 +49,7 @@ router.push("/dashboard");
         <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 brightness-50 contrast-150" />
       </div>
 
-      {/* 2. Glassmorphism Card */}
+      {/* Login Card */}
       <div className="relative z-10 w-full max-w-md p-8 mx-4 bg-gray-900/40 backdrop-blur-xl border border-white/10 rounded-3xl shadow-2xl">
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-12 h-12 bg-purple-600 rounded-xl mb-4 shadow-lg shadow-purple-500/30">
@@ -70,7 +59,7 @@ router.push("/dashboard");
           <p className="text-gray-400 mt-2">Resume your journey and conquer the day.</p>
         </div>
 
-        {/* 3. Dynamic Social Login Buttons */}
+        {/* Social Login Buttons */}
         <div className="grid grid-cols-2 gap-4 mb-8">
           <a
             href={`${API_BASE_URL}/auth/login/github`}
@@ -98,7 +87,7 @@ router.push("/dashboard");
           <span className="relative bg-transparent px-4 text-xs text-gray-500 uppercase tracking-widest">Or login with email</span>
         </div>
 
-        {/* 4. Form Inputs */}
+        {/* Email Login Form */}
         <form onSubmit={handleEmailLogin} className="space-y-5">
           <div className="relative group">
             <Mail className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500 group-focus-within:text-purple-500 transition-colors" />
