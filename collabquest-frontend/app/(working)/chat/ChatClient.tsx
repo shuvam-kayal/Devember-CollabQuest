@@ -426,7 +426,6 @@ function ChatPage() {
     return (
         <div className="h-screen bg-gray-950 text-white flex flex-col overflow-hidden relative">
             <style jsx global>{` .custom-scrollbar::-webkit-scrollbar { width: 6px; } .custom-scrollbar::-webkit-scrollbar-track { background: #111827; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #374151; border-radius: 4px; } .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #4B5563; } `}</style>
-            <GlobalHeader />
 
             {/* --- CALL OVERLAY --- */}
             <AnimatePresence>
