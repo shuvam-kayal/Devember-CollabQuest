@@ -3,15 +3,14 @@
 import { useEffect, useState } from "react";
 import Cookies from "js-cookie";
 import Link from "next/link";
-import { Loader2, Volume2, ArrowLeft } from "lucide-react";
+import { Loader2, Volume2, ArrowLeft, AlertTriangle, Trash2 } from "lucide-react";
+import api from "@/lib/api";
 
 export default function SettingsPage() {
-  // deterministic initial state to avoid SSR/client mismatch
   const [tts, setTts] = useState<boolean>(false);
   const [allowed, setAllowed] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // gate access to settings behind a token
     try {
       const token = Cookies.get("token");
       setAllowed(!!token);
@@ -30,10 +29,23 @@ export default function SettingsPage() {
   useEffect(() => {
     try {
       localStorage.setItem("ttsEnabled", tts ? "true" : "false");
-      // notify SelectionTTS in same tab via custom event
       window.dispatchEvent(new CustomEvent("ttsChanged", { detail: tts }));
     } catch {}
   }, [tts]);
+
+  // --- DELETE ACCOUNT HANDLER ---
+  const handleDeleteAccount = async () => {
+    const confirmation = window.prompt("Type 'DELETE' to confirm permanent account deletion. This cannot be undone.");
+    if (confirmation !== "DELETE") return;
+
+    try {
+        await api.delete("/users/me");
+        Cookies.remove("token");
+        window.location.href = "/";
+    } catch (err: any) {
+        alert(err.response?.data?.detail || "Failed to delete account.");
+    }
+  }
 
   if (allowed === null) {
     return (
@@ -74,7 +86,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Accessibility Card */}
-        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl">
+        <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 shadow-xl mb-8">
             <div className="flex items-center gap-3 mb-6 border-b border-gray-800 pb-4">
                 <Volume2 className="w-5 h-5 text-purple-400" />
                 <h2 className="text-lg font-semibold">Accessibility</h2>
@@ -108,6 +120,25 @@ export default function SettingsPage() {
                 </p>
             </div>
         </div>
+
+        {/* DANGER ZONE (NEW) */}
+        <div className="bg-gray-900 border border-red-900/30 rounded-2xl p-6 shadow-xl">
+            <div className="flex items-center gap-3 mb-4 border-b border-red-900/30 pb-4">
+                <AlertTriangle className="w-5 h-5 text-red-500" />
+                <h2 className="text-lg font-semibold text-red-500">Danger Zone</h2>
+            </div>
+            <p className="text-sm text-gray-400 mb-6 leading-relaxed">
+                Permanently remove your account and all associated data. This action is irreversible. 
+                <br /><span className="text-red-400 italic">Note: You must leave all active and planning projects before you can delete your account.</span>
+            </p>
+            <button 
+                onClick={handleDeleteAccount}
+                className="bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white border border-red-600 font-bold py-3 px-6 rounded-xl transition flex items-center gap-2"
+            >
+                <Trash2 className="w-4 h-4" /> Delete Account
+            </button>
+        </div>
+
       </div>
     </main>
   );

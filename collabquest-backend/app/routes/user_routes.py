@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from pydantic import BaseModel
-from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, Team, VisibilitySettings, Notification
+from app.models import (
+    User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, 
+    ConnectedAccounts, Education, Team, VisibilitySettings, Notification,
+    ChatGroup, Message, UnreadCount, Match, Swipe
+)
 from app.auth.dependencies import get_current_user
 from app.services.vector_store import generate_embedding
 from app.auth.utils import fetch_codeforces_stats, fetch_leetcode_stats, update_trust_score
@@ -253,6 +257,82 @@ async def get_user_compatibility_score(user_id: str, current_user: User = Depend
         
     score = await calculate_user_compatibility(current_user, target_user)
     return {"score": score}
+
+@router.delete("/me", response_model=dict)
+async def delete_my_account(current_user: User = Depends(get_current_user)):
+    """
+    Permanently deletes the user account.
+    Requirement: User must NOT be a member of any active or planning team.
+    """
+    user_id = str(current_user.id)
+
+    # 1. Validation: Check for Active/Planning Teams
+    # We allow deletion if the user is ONLY in 'completed' teams (or no teams).
+    active_teams = await Team.find(
+        Team.members == user_id,
+        Team.status != "completed" 
+    ).to_list()
+
+    if active_teams:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Cannot delete account. You are currently a member of {len(active_teams)} active or planning project(s). Please leave or delete these projects first."
+        )
+
+    # 2. Cleanup: Remove from Completed Teams
+    all_teams = await Team.find(Team.members == user_id).to_list()
+    for team in all_teams:
+        if user_id in team.members:
+            team.members.remove(user_id)
+            # If user was leader, leader_id remains pointing to deleted user or handle specifically.
+            # Since the project is completed, it's acceptable for historical data to be static 
+            # or we can set it to a placeholder.
+            if team.leader_id == user_id:
+                team.leader_id = "DELETED_USER"
+            await team.save()
+
+    # 3. Cleanup: Chat Groups & Messages
+    chat_groups = await ChatGroup.find(ChatGroup.members == user_id).to_list()
+    for group in chat_groups:
+        if user_id in group.members:
+            group.members.remove(user_id)
+            # If group becomes empty, delete it
+            if len(group.members) == 0:
+                await group.delete()
+            else:
+                await group.save()
+    
+    # Delete all messages sent by this user
+    await Message.find(Message.sender_id == user_id).delete()
+    # Delete unread counts
+    await UnreadCount.find(UnreadCount.user_id == user_id).delete()
+    await UnreadCount.find(UnreadCount.target_id == user_id).delete()
+
+    # 4. Cleanup: Connections
+    # Remove this user from others' accepted_chat_requests
+    connected_users = await User.find(User.accepted_chat_requests == user_id).to_list()
+    for u in connected_users:
+        if user_id in u.accepted_chat_requests:
+            u.accepted_chat_requests.remove(user_id)
+            await u.save()
+
+    # 5. Cleanup: Matching & Social Data
+    await Match.find(Match.user_id == user_id).delete()
+    await Match.find(Match.leader_id == user_id).delete()
+    
+    await Swipe.find(Swipe.swiper_id == user_id).delete()
+    await Swipe.find(Swipe.target_id == user_id).delete()
+    
+    await Notification.find(Notification.recipient_id == user_id).delete()
+    await Notification.find(Notification.sender_id == user_id).delete()
+    
+    await Block.find(Block.blocker_id == user_id).delete()
+    await Block.find(Block.blocked_id == user_id).delete()
+
+    # 6. Final Execution: Delete User
+    await current_user.delete()
+
+    return {"status": "deleted", "message": "Account and all associated data permanently deleted."}
 
 # --- FAVORITES ---
 
