@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from app.models import User, Skill, DayAvailability, TimeRange, Block, Link, Achievement, ConnectedAccounts, Education, Team, VisibilitySettings
 from app.auth.dependencies import get_current_user
 from app.services.vector_store import generate_embedding
+from app.services.matching_service import calculate_user_compatibility
 from app.auth.utils import fetch_codeforces_stats, fetch_leetcode_stats, update_trust_score
 from bson import ObjectId
 from datetime import datetime
@@ -47,6 +48,22 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
         await current_user.save()
     
     return current_user
+
+@router.get("/{user_id}/compatibility")
+async def get_user_compatibility_score(user_id: str, current_user: User = Depends(get_current_user)):
+    """Calculates AI compatibility between current user and target user"""
+    if not ObjectId.is_valid(user_id):
+        raise HTTPException(status_code=400, detail="Invalid User ID")
+        
+    if user_id == str(current_user.id):
+        return {"score": 100} 
+        
+    target_user = await User.get(user_id)
+    if not target_user:
+        raise HTTPException(status_code=404, detail="User not found")
+        
+    score = await calculate_user_compatibility(current_user, target_user)
+    return {"score": score}
 
 # --- FAVORITES ---
 

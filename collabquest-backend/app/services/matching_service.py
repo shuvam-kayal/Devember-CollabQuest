@@ -76,12 +76,25 @@ def calculate_project_match(user: User, project: Team) -> float:
     semantic_score = calculate_similarity(user.embedding, project.embedding) * 100
     return round(semantic_score, 0)
 
-def calculate_user_compatibility(user_a: User, user_b: User) -> float:
+async def calculate_user_compatibility(user_a: User, user_b: User) -> float:
+    # Ensure embeddings exist
     if not user_a.embedding:
-        user_a.embedding = generate_embedding(f"{' '.join([s.name for s in user_a.skills])} {' '.join(user_a.interests)}")
+        skills_str_a = ' '.join([s.name for s in user_a.skills])
+        user_a.embedding = generate_embedding(f"Developer with skills: {skills_str_a}. Interests: {' '.join(user_a.interests)}.")
+        await user_a.save()
+
     if not user_b.embedding:
-        user_b.embedding = generate_embedding(f"{' '.join([s.name for s in user_b.skills])} {' '.join(user_b.interests)}")
+        skills_str_b = ' '.join([s.name for s in user_b.skills])
+        user_b.embedding = generate_embedding(f"Developer with skills: {skills_str_b}. Interests: {' '.join(user_b.interests)}.")
+        await user_b.save()
     
-    similarity = calculate_similarity(user_a.embedding, user_b.embedding) * 100
-    trust_boost = (user_b.trust_score / 10) * 10
-    return round(similarity + trust_boost, 0)
+    # 1. Semantic Match (70%)
+    semantic_score = calculate_similarity(user_a.embedding, user_b.embedding) * 100
+    
+    # 2. Availability Overlap (30%)
+    avail_score = calculate_time_overlap(user_a.availability, user_b.availability)
+    
+    # Weighted Sum
+    final_score = (semantic_score * 0.70) + (avail_score * 0.30)
+    
+    return round(final_score, 0)

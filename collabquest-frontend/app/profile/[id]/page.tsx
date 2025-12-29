@@ -6,7 +6,8 @@ import GlobalHeader from "@/components/GlobalHeader";
 import { 
     ArrowLeft, Code2, Heart, User as UserIcon, GraduationCap, 
     Link as LinkIcon, Award, Star, Loader2, ShieldCheck, 
-    Github, Linkedin, Code, Mail, MessageSquare, Send, X 
+    Github, Linkedin, Code, Mail, MessageSquare, Send, X,
+    Sparkles // <--- Added Icon
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -15,6 +16,7 @@ export default function PublicProfile() {
     const router = useRouter();
     const [user, setUser] = useState<any>(null);
     const [loading, setLoading] = useState(true);
+    const [compatibility, setCompatibility] = useState<number | null>(null); // <--- State for Score
 
     // Email Modal State
     const [showEmailModal, setShowEmailModal] = useState(false);
@@ -23,10 +25,18 @@ export default function PublicProfile() {
     const [sendingEmail, setSendingEmail] = useState(false);
 
     useEffect(() => {
-        api.get(`/users/${params.id}`)
-            .then(res => setUser(res.data))
-            .catch(() => alert("Error: Profile unavailable or user blocked."))
-            .finally(() => setLoading(false));
+        if (params.id) {
+            // 1. Fetch User Profile
+            api.get(`/users/${params.id}`)
+                .then(res => setUser(res.data))
+                .catch(() => alert("Error: Profile unavailable or user blocked."))
+                .finally(() => setLoading(false));
+
+            // 2. Fetch AI Compatibility Score
+            api.get(`/users/${params.id}/compatibility`)
+                .then(res => setCompatibility(res.data.score))
+                .catch(err => console.error("Failed to fetch compatibility", err));
+        }
     }, [params.id]);
 
     const isVisible = (key: string) => {
@@ -78,7 +88,12 @@ export default function PublicProfile() {
                         <div className="text-center md:text-left flex-1">
                             <h1 className="text-4xl font-bold">{user.username}</h1>
                             
-                            {/* --- EMAIL DISPLAY (CONDITIONAL) --- */}
+                            {/* FULL NAME */}
+                            {isVisible('full_name') && user.full_name && (
+                                <h2 className="text-lg text-gray-400 font-medium mt-1">{user.full_name}</h2>
+                            )}
+                            
+                            {/* EMAIL */}
                             {isVisible('email') && user.email && (
                                 <a href={`mailto:${user.email}`} className="inline-flex items-center gap-2 text-gray-400 hover:text-white transition mt-2 text-sm bg-white/5 px-3 py-1 rounded-full border border-white/5 hover:border-white/20">
                                     <Mail className="w-3.5 h-3.5" />
@@ -92,7 +107,7 @@ export default function PublicProfile() {
                                 {user.school && <span className="flex items-center gap-2 bg-gray-800 px-3 py-1 rounded-full text-gray-300"><GraduationCap className="w-4 h-4"/> {user.school}</span>}
                             </div>
 
-                            {/* --- ACTION BUTTONS --- */}
+                            {/* ACTION BUTTONS */}
                             <div className="flex justify-center md:justify-start gap-3 mt-6">
                                 <button 
                                     onClick={handleStartChat}
@@ -109,12 +124,23 @@ export default function PublicProfile() {
                             </div>
                         </div>
 
-                        {/* TRUST SCORE BADGE */}
-                        <div className="bg-black/50 border border-green-500/30 p-4 rounded-2xl text-center min-w-[120px]">
-                            <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
-                            {/* Display score out of 10 */}
-                            <div className="text-3xl font-black text-white">{Math.min(10.0, user.trust_score).toFixed(1)}</div>
-                            <div className="text-[10px] text-gray-500 uppercase tracking-widest">/ 10 Trust</div>
+                        {/* --- SCORES BADGES --- */}
+                        <div className="flex gap-4">
+                            {/* TRUST SCORE BADGE */}
+                            <div className="bg-black/50 border border-green-500/30 p-4 rounded-2xl text-center min-w-[120px]">
+                                <ShieldCheck className="w-8 h-8 text-green-500 mx-auto mb-2" />
+                                <div className="text-3xl font-black text-white">{Math.min(10.0, user.trust_score).toFixed(1)}</div>
+                                <div className="text-[10px] text-gray-500 uppercase tracking-widest">/ 10 Trust</div>
+                            </div>
+
+                            {/* AI MATCH BADGE (NEW) */}
+                            {compatibility !== null && (
+                                <div className="bg-black/50 border border-purple-500/30 p-4 rounded-2xl text-center min-w-[120px]">
+                                    <Sparkles className="w-8 h-8 text-purple-500 mx-auto mb-2" />
+                                    <div className="text-3xl font-black text-white">{compatibility}%</div>
+                                    <div className="text-[10px] text-gray-500 uppercase tracking-widest">AI Match</div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -123,7 +149,7 @@ export default function PublicProfile() {
                     
                     {/* LEFT COLUMN: Verification & Stats */}
                     <div className="space-y-6">
-                        {/* TRUST BREAKDOWN (PERMANENTLY VISIBLE) */}
+                        {/* TRUST BREAKDOWN */}
                         <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl">
                             <h3 className="font-bold mb-4 flex items-center gap-2 text-green-400"><ShieldCheck className="w-4 h-4"/> Verified Stats</h3>
                             <div className="space-y-4">
@@ -140,7 +166,7 @@ export default function PublicProfile() {
                                         </div>
                                     </div>
                                 )}
-                                {/* Other Platforms (if connected and visible) */}
+                                {/* Other Platforms */}
                                 {user.connected_accounts?.linkedin && isVisible('linkedin') && (
                                     <div className="flex items-center gap-2 text-sm text-gray-400">
                                         <Linkedin className="w-4 h-4 text-blue-400" /> LinkedIn Verified
@@ -193,7 +219,7 @@ export default function PublicProfile() {
                             </div>
                         </div>
 
-                        {/* Education (New) */}
+                        {/* Education */}
                         {isVisible('education') && user.education && user.education.length > 0 && (
                              <div className="bg-gray-900 border border-gray-800 p-6 rounded-2xl">
                                 <h3 className="font-bold mb-4 flex items-center gap-2 text-purple-400"><GraduationCap className="w-4 h-4"/> Education</h3>
