@@ -6,8 +6,8 @@ import api from "@/lib/api";
 import { 
     Send, User, MessageSquare, Users, MoreVertical, UserIcon, Search, 
     ShieldAlert, Check, X, Lock, LogOut, Slash, Plus, Trash2, Ban, 
-    Paperclip, File, FileText, Video, Phone, Mic, MicOff, 
-    VideoOff, PhoneOff, Monitor, MonitorOff, ChevronLeft, Film, Music
+    Paperclip, File, FileText, Image as ImageIcon, Film, Music, Download, 
+    Video, Phone, Mic, MicOff, VideoOff, PhoneOff, Monitor, MonitorOff, ChevronLeft
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -61,52 +61,19 @@ const rtcConfig = {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
-// --- GLOSSY COLOR SYSTEM FOR GROUP CHAT ---
-// Using specific border-t/l for highlights and shadow for glow
+// --- GLOSSY COLOR SYSTEM FOR GROUPS ---
 const USER_COLORS = [
-    // Blue Theme
-    { 
-        bubble: "bg-gradient-to-br from-blue-500/20 to-blue-900/10 border-t-blue-400/50 border-l-blue-400/50 border-b-blue-900/30 border-r-blue-900/30 shadow-[0_0_15px_rgba(59,130,246,0.15)]", 
-        text: "text-blue-100", 
-        name: "text-blue-400 drop-shadow-[0_0_5px_rgba(59,130,246,0.5)]" 
-    },
-    // Emerald Theme
-    { 
-        bubble: "bg-gradient-to-br from-emerald-500/20 to-emerald-900/10 border-t-emerald-400/50 border-l-emerald-400/50 border-b-emerald-900/30 border-r-emerald-900/30 shadow-[0_0_15px_rgba(16,185,129,0.15)]", 
-        text: "text-emerald-100", 
-        name: "text-emerald-400 drop-shadow-[0_0_5px_rgba(16,185,129,0.5)]" 
-    },
-    // Rose Theme
-    { 
-        bubble: "bg-gradient-to-br from-rose-500/20 to-rose-900/10 border-t-rose-400/50 border-l-rose-400/50 border-b-rose-900/30 border-r-rose-900/30 shadow-[0_0_15px_rgba(244,63,94,0.15)]", 
-        text: "text-rose-100", 
-        name: "text-rose-400 drop-shadow-[0_0_5px_rgba(244,63,94,0.5)]" 
-    },
-    // Amber Theme
-    { 
-        bubble: "bg-gradient-to-br from-amber-500/20 to-amber-900/10 border-t-amber-400/50 border-l-amber-400/50 border-b-amber-900/30 border-r-amber-900/30 shadow-[0_0_15px_rgba(245,158,11,0.15)]", 
-        text: "text-amber-100", 
-        name: "text-amber-400 drop-shadow-[0_0_5px_rgba(245,158,11,0.5)]" 
-    },
-    // Cyan Theme
-    { 
-        bubble: "bg-gradient-to-br from-cyan-500/20 to-cyan-900/10 border-t-cyan-400/50 border-l-cyan-400/50 border-b-cyan-900/30 border-r-cyan-900/30 shadow-[0_0_15px_rgba(6,182,212,0.15)]", 
-        text: "text-cyan-100", 
-        name: "text-cyan-400 drop-shadow-[0_0_5px_rgba(6,182,212,0.5)]" 
-    },
-    // Fuchsia Theme
-    { 
-        bubble: "bg-gradient-to-br from-fuchsia-500/20 to-fuchsia-900/10 border-t-fuchsia-400/50 border-l-fuchsia-400/50 border-b-fuchsia-900/30 border-r-fuchsia-900/30 shadow-[0_0_15px_rgba(217,70,239,0.15)]", 
-        text: "text-fuchsia-100", 
-        name: "text-fuchsia-400 drop-shadow-[0_0_5px_rgba(217,70,239,0.5)]" 
-    },
+    { bubble: "bg-gradient-to-br from-blue-500/10 to-blue-900/20 border-t-blue-400/30 border-l-blue-400/30 border-b-blue-900/10 border-r-blue-900/10 shadow-[0_0_15px_rgba(59,130,246,0.1)]", text: "text-blue-100", name: "text-blue-400 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" },
+    { bubble: "bg-gradient-to-br from-emerald-500/10 to-emerald-900/20 border-t-emerald-400/30 border-l-emerald-400/30 border-b-emerald-900/10 border-r-emerald-900/10 shadow-[0_0_15px_rgba(16,185,129,0.1)]", text: "text-emerald-100", name: "text-emerald-400 drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]" },
+    { bubble: "bg-gradient-to-br from-rose-500/10 to-rose-900/20 border-t-rose-400/30 border-l-rose-400/30 border-b-rose-900/10 border-r-rose-900/10 shadow-[0_0_15px_rgba(244,63,94,0.1)]", text: "text-rose-100", name: "text-rose-400 drop-shadow-[0_0_8px_rgba(244,63,94,0.5)]" },
+    { bubble: "bg-gradient-to-br from-amber-500/10 to-amber-900/20 border-t-amber-400/30 border-l-amber-400/30 border-b-amber-900/10 border-r-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]", text: "text-amber-100", name: "text-amber-400 drop-shadow-[0_0_8px_rgba(245,158,11,0.5)]" },
+    { bubble: "bg-gradient-to-br from-cyan-500/10 to-cyan-900/20 border-t-cyan-400/30 border-l-cyan-400/30 border-b-cyan-900/10 border-r-cyan-900/10 shadow-[0_0_15px_rgba(6,182,212,0.1)]", text: "text-cyan-100", name: "text-cyan-400 drop-shadow-[0_0_8px_rgba(6,182,212,0.5)]" },
+    { bubble: "bg-gradient-to-br from-fuchsia-500/10 to-fuchsia-900/20 border-t-fuchsia-400/30 border-l-fuchsia-400/30 border-b-fuchsia-900/10 border-r-fuchsia-900/10 shadow-[0_0_15px_rgba(217,70,239,0.1)]", text: "text-fuchsia-100", name: "text-fuchsia-400 drop-shadow-[0_0_8px_rgba(217,70,239,0.5)]" },
 ];
 
 const getUserColor = (userId: string) => {
     let hash = 0;
-    for (let i = 0; i < userId.length; i++) {
-        hash = userId.charCodeAt(i) + ((hash << 5) - hash);
-    }
+    for (let i = 0; i < userId.length; i++) hash = userId.charCodeAt(i) + ((hash << 5) - hash);
     const index = Math.abs(hash) % USER_COLORS.length;
     return USER_COLORS[index];
 };
@@ -114,7 +81,7 @@ const getUserColor = (userId: string) => {
 const Tooltip = ({ children, text }: { children: React.ReactNode, text: string }) => (
   <div className="group relative">
     {children}
-    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block px-3 py-1.5 bg-gray-900 border border-white/10 text-xs text-white font-medium rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-xl">
+    <span className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block px-3 py-1.5 bg-[#1A1D21] border border-white/10 text-xs text-white font-medium rounded-lg opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none shadow-xl">
       {text}
     </span>
   </div>
@@ -149,7 +116,10 @@ export default function ChatClient() {
     const remoteVideoRef = useRef<HTMLVideoElement>(null);
     const peerConnection = useRef<RTCPeerConnection | null>(null);
     const localStream = useRef<MediaStream | null>(null);
-    const screenStreamRef = useRef<MediaStream | null>(null); 
+    const screenStreamRef = useRef<MediaStream | null>(null);
+    
+    // SAFETY: We use a state to hold the remote stream to force React to update the video element
+    const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null);
 
     const activeChatRef = useRef<string | null>(null);
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -173,16 +143,14 @@ export default function ChatClient() {
     const [isSidebarOpen, setIsSidebarOpen] = useState(true);
     const initialTarget = searchParams.get("targetId");
 
-    // --- MOUSE EFFECT STATE ---
+    // Mouse Glow
     const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
 
     useEffect(() => { activeChatRef.current = activeChat?.id || null; }, [activeChat]);
 
-    // Mouse Effect Listener
+    // Mouse listener
     useEffect(() => {
-        const updateMousePosition = (ev: MouseEvent) => {
-            setMousePosition({ x: ev.clientX, y: ev.clientY });
-        };
+        const updateMousePosition = (ev: MouseEvent) => { setMousePosition({ x: ev.clientX, y: ev.clientY }); };
         window.addEventListener("mousemove", updateMousePosition);
         return () => window.removeEventListener("mousemove", updateMousePosition);
     }, []);
@@ -190,8 +158,7 @@ export default function ChatClient() {
     useEffect(() => {
         const token = Cookies.get("token");
         if (!token) { router.push("/"); return; }
-        api.get("/users/me")
-            .then(res => { setUserId(res.data._id || res.data.id); connectWs(res.data._id || res.data.id); });
+        api.get("/users/me").then(res => { setUserId(res.data._id || res.data.id); connectWs(res.data._id || res.data.id); });
         fetchChatList();
     }, []);
 
@@ -202,10 +169,18 @@ export default function ChatClient() {
 
     useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
 
+    // SAFETY: Binding video elements when stream or call state changes
+    useEffect(() => {
+        if (remoteVideoRef.current && remoteStream) {
+            remoteVideoRef.current.srcObject = remoteStream;
+        }
+    }, [remoteStream, isInCall]);
+
     const connectWs = (uid: string) => {
         const socket = new WebSocket(`${WS_URL}/chat/ws/${uid}`);
         socket.onmessage = async (event) => {
             const data = JSON.parse(event.data);
+            
             if (data.event === 'offer') {
                 if (isInCall) return; 
                 setIncomingCall({ sender_id: data.sender_id, offer: data.data.offer, callType: data.data.callType });
@@ -243,6 +218,7 @@ export default function ChatClient() {
         setCallType(type);
         setIsMuted(false);
         setIsCameraOff(false);
+        setRemoteStream(null);
 
         peerConnection.current = new RTCPeerConnection(rtcConfig);
         peerConnection.current.onicecandidate = (event) => {
@@ -250,11 +226,18 @@ export default function ChatClient() {
                 ws.send(JSON.stringify({ event: 'ice-candidate', recipient_id: activeChat.id, data: event.candidate }));
             }
         };
-        peerConnection.current.ontrack = (event) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0]; };
+
+        peerConnection.current.ontrack = (event) => {
+            // SAFETY: Set state to trigger re-render of video element
+            if (event.streams && event.streams[0]) {
+                setRemoteStream(event.streams[0]);
+            }
+        };
 
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: type === 'video', audio: true });
             localStream.current = stream;
+            
             if (localVideoRef.current) localVideoRef.current.srcObject = type === 'video' ? stream : null;
 
             stream.getTracks().forEach(track => { peerConnection.current?.addTrack(track, stream); });
@@ -262,7 +245,7 @@ export default function ChatClient() {
             await peerConnection.current.setLocalDescription(offer);
 
             ws.send(JSON.stringify({ event: 'offer', recipient_id: activeChat.id, data: { offer, callType: type } }));
-        } catch (err) { console.error("Error accessing media devices:", err); endCall(); alert("Could not access camera/microphone."); }
+        } catch (err) { console.error(err); endCall(); alert("Could not access camera/microphone."); }
     };
 
     const acceptCall = async () => {
@@ -271,13 +254,20 @@ export default function ChatClient() {
         setCallType(incomingCall.callType);
         setIsMuted(false);
         setIsCameraOff(false);
+        setRemoteStream(null);
+        
         if (activeChat?.id !== incomingCall.sender_id) handleSelectChat(incomingCall.sender_id);
 
         peerConnection.current = new RTCPeerConnection(rtcConfig);
         peerConnection.current.onicecandidate = (event) => {
             if (event.candidate) { ws.send(JSON.stringify({ event: 'ice-candidate', recipient_id: incomingCall.sender_id, data: event.candidate })); }
         };
-        peerConnection.current.ontrack = (event) => { if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0]; };
+        
+        peerConnection.current.ontrack = (event) => {
+            if (event.streams && event.streams[0]) {
+                setRemoteStream(event.streams[0]);
+            }
+        };
 
         try {
             await peerConnection.current.setRemoteDescription(new RTCSessionDescription(incomingCall.offer));
@@ -300,8 +290,16 @@ export default function ChatClient() {
         if (peerConnection.current) peerConnection.current.close();
         if (ws && activeChat && isInCall) ws.send(JSON.stringify({ event: 'hang-up', recipient_id: activeChat.id }));
         
-        peerConnection.current = null; localStream.current = null; screenStreamRef.current = null;
-        setIsInCall(false); setIncomingCall(null); setIsScreenSharing(false); setIsMuted(false); setIsCameraOff(false);
+        peerConnection.current = null; 
+        localStream.current = null; 
+        screenStreamRef.current = null;
+        setRemoteStream(null);
+        
+        setIsInCall(false); 
+        setIncomingCall(null); 
+        setIsScreenSharing(false); 
+        setIsMuted(false); 
+        setIsCameraOff(false);
     };
 
     const toggleScreenShare = async () => {
@@ -316,7 +314,7 @@ export default function ChatClient() {
                 const audioSender = peerConnection.current.getSenders().find(s => s.track?.kind === 'audio'); if (audioSender) audioSender.replaceTrack(audioTrack);
                 localStream.current = stream; if (localVideoRef.current) localVideoRef.current.srcObject = stream;
                 setIsScreenSharing(false);
-            } catch(e) { console.error("Error reverting to camera", e); }
+            } catch(e) { console.error("Error", e); }
         } else {
             try {
                 const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
@@ -326,7 +324,7 @@ export default function ChatClient() {
                 screenTrack.onended = () => toggleScreenShare(); 
                 if (localVideoRef.current) localVideoRef.current.srcObject = stream;
                 setIsScreenSharing(true);
-            } catch (err: any) { console.error("Screen share error:", err); }
+            } catch (err: any) { console.error(err); }
         }
     };
 
@@ -391,9 +389,23 @@ export default function ChatClient() {
                         <div className="relative w-full h-full max-w-7xl flex items-center justify-center p-4">
                             {callType === 'video' ? (
                                 <div className="relative w-full h-full bg-[#13161C] rounded-3xl overflow-hidden border border-white/10 shadow-2xl">
-                                    <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-contain bg-black" />
+                                    {/* REMOTE VIDEO - Attached via state for React safety */}
+                                    <video 
+                                        ref={el => { if(el && remoteStream) el.srcObject = remoteStream }}
+                                        autoPlay 
+                                        playsInline 
+                                        className="w-full h-full object-contain bg-black" 
+                                    />
+                                    
+                                    {/* LOCAL VIDEO PIP */}
                                     <div className="absolute bottom-6 right-6 w-64 aspect-video bg-[#1A1D21] rounded-xl overflow-hidden shadow-2xl border border-white/10 z-20">
-                                        <video ref={localVideoRef} autoPlay playsInline muted className={`w-full h-full object-cover ${isCameraOff ? 'hidden' : ''}`} />
+                                        <video 
+                                            ref={el => { if(el && localStream.current) el.srcObject = localStream.current }}
+                                            autoPlay 
+                                            playsInline 
+                                            muted 
+                                            className={`w-full h-full object-cover ${isCameraOff ? 'hidden' : ''}`} 
+                                        />
                                         {isCameraOff && <div className="flex items-center justify-center h-full text-gray-500"><VideoOff className="w-8 h-8"/></div>}
                                     </div>
                                 </div>
@@ -405,7 +417,7 @@ export default function ChatClient() {
                                     </div>
                                     <p className="mt-6 text-2xl font-bold text-white">{activeChat?.name}</p>
                                     <p className="text-green-400 font-bold text-sm mt-2 animate-pulse tracking-wide">Voice Connected</p>
-                                    <video ref={remoteVideoRef} autoPlay playsInline className="hidden" />
+                                    <video ref={el => { if(el && remoteStream) el.srcObject = remoteStream }} autoPlay playsInline className="hidden" />
                                 </div>
                             )}
                         </div>
