@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
@@ -62,7 +62,7 @@ const rtcConfig = {
     iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
 };
 
-export default function ChatPage() {
+function ChatPage() {
     const searchParams = useSearchParams();
     const router = useRouter();
     const [userId, setUserId] = useState("");
@@ -657,4 +657,13 @@ export default function ChatPage() {
             </div>
         </div>
     );
+}
+
+export default function ChatPages() {
+  return (
+    // You can put a loading spinner in the "fallback"
+    <Suspense fallback={<div>Loading chat...</div>}>
+      <ChatPage />
+    </Suspense>
+  )
 }
