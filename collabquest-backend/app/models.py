@@ -181,6 +181,7 @@ class Team(Document):
     description: str
     members: List[str]
     needed_skills: List[str] = [] 
+    leader_id: Optional[str] = None
     active_needed_skills: List[str] = [] 
     is_looking_for_members: bool = Field(default=True)
 

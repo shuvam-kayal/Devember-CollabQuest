@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from typing import List, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel
-from app.models import User, Team, Swipe, Match, Notification
+from app.models import User, Team, Swipe, Match, Notification, Block
 from app.auth.dependencies import get_current_user
 from app.services.matching_service import calculate_project_match, calculate_user_compatibility, calculate_match_score
 from beanie.operators import Or
@@ -50,55 +50,38 @@ async def match_projects_for_user(
     max_members: Optional[int] = None,
     recruiting_only: bool = True
 ):
-    # 1. Fetch all teams
+    my_id = str(current_user.id)
+    # Fetch Blocked List
+    blocks = await Block.find({"$or": [{"blocker_id": my_id}, {"blocked_id": my_id}]}).to_list()
+    blocked_ids = set([b.blocked_id if b.blocker_id == my_id else b.blocker_id for b in blocks])
+
     all_teams = await Team.find_all().to_list()
-    
-    # 2. Filter Logic
     candidates = []
-    
     search_lower = search.lower() if search else None
     
     for t in all_teams:
-        # Exclude joined teams
-        if str(current_user.id) in t.members:
-            continue
-            
-        # Filter: Recruiting Status
-        if recruiting_only and not t.is_looking_for_members:
-            continue
-            
-        # Filter: Search Name
-        if search_lower and search_lower not in t.name.lower():
-            continue
-            
-        # Filter: Member Count
-        if min_members is not None and len(t.members) < min_members:
-            continue
-        if max_members is not None and len(t.members) > max_members:
-            continue
-            
-        # Filter: Tech Stack (Skills)
+        if str(current_user.id) in t.members: continue
+        # Filter blocked leaders
+        if t.leader_id in blocked_ids: continue
+        
+        if recruiting_only and not t.is_looking_for_members: continue
+        if search_lower and search_lower not in t.name.lower(): continue
+        if min_members is not None and len(t.members) < min_members: continue
+        if max_members is not None and len(t.members) > max_members: continue
         if skills:
             team_skills = set(s.lower() for s in (t.needed_skills + t.active_needed_skills))
             req_skills = set(s.lower() for s in skills)
-            if not team_skills.intersection(req_skills):
-                continue
-
+            if not team_skills.intersection(req_skills): continue
         candidates.append(t)
     
     scored_projects = []
     for team in candidates:
-        # --- FIX START: Fetch User Objects for Members ---
         member_objects = []
         for m_id in team.members:
             user = await User.get(m_id)
-            if user:
-                member_objects.append(user)
+            if user: member_objects.append(user)
         
-        # Now pass the objects, NOT the ID strings
         score = await calculate_match_score(current_user, team, member_objects)
-        # --- FIX END ---
-
         team_dict = team.dict()
         team_dict["id"] = str(team.id)
         team_dict["_id"] = str(team.id)
@@ -114,11 +97,16 @@ async def match_teammates_for_user(
     search: Optional[str] = None,
     skills: Optional[List[str]] = Query(None),
     interests: Optional[List[str]] = Query(None),
-    randomize: bool = False, # <--- CONTROL FLAG (Default False = Sorted)
+    randomize: bool = False,
     current_user: User = Depends(get_current_user)
 ):
+    my_id = str(current_user.id)
+    # Fetch Blocked List
+    blocks = await Block.find({"$or": [{"blocker_id": my_id}, {"blocked_id": my_id}]}).to_list()
+    blocked_ids = set([b.blocked_id if b.blocker_id == my_id else b.blocker_id for b in blocks])
+
     all_users = await User.find_all().to_list()
-    exclude_ids = {str(current_user.id)}
+    exclude_ids = {my_id}
     
     target_project = None
     existing_members_objects = []
@@ -131,7 +119,7 @@ async def match_teammates_for_user(
                 m_user = await User.get(member_id)
                 if m_user: existing_members_objects.append(m_user)
     else:
-        my_teams = await Team.find(Team.members == str(current_user.id)).to_list()
+        my_teams = await Team.find(Team.members == my_id).to_list()
         for team in my_teams:
             for member_id in team.members:
                 exclude_ids.add(member_id)
@@ -141,6 +129,7 @@ async def match_teammates_for_user(
     
     for u in all_users:
         if str(u.id) in exclude_ids: continue
+        if str(u.id) in blocked_ids: continue # Exclude blocked users
         if not u.is_looking_for_team: continue
         if search_lower and search_lower not in u.username.lower(): continue
         if skills:
@@ -166,11 +155,10 @@ async def match_teammates_for_user(
         user_dict["match_score"] = score
         scored_users.append(user_dict)
             
-    # --- LOGIC SWITCH ---
     if randomize:
-        random.shuffle(scored_users) # For Recruit Search (Discovery)
+        random.shuffle(scored_users)
     else:
-        scored_users.sort(key=lambda x: x["match_score"], reverse=True) # For Smart Finder (Best Fit First)
+        scored_users.sort(key=lambda x: x["match_score"], reverse=True)
         
     return scored_users
 

@@ -54,41 +54,86 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
     
     return current_user
 
+# --- BLOCKING FEATURE (NEW) ---
+
+@router.post("/{user_id}/block")
+async def block_user(user_id: str, current_user: User = Depends(get_current_user)):
+    """Blocks a user and cleans up connections/matches"""
+    if user_id == str(current_user.id): raise HTTPException(400, "Cannot block self")
+    
+    # 1. Create Block Entry
+    await Block(blocker_id=str(current_user.id), blocked_id=user_id).insert()
+    
+    # 2. Remove Connections (Chat Requests)
+    target = await User.get(user_id)
+    if target:
+        if user_id in current_user.accepted_chat_requests:
+            current_user.accepted_chat_requests.remove(user_id)
+            await current_user.save()
+        if str(current_user.id) in target.accepted_chat_requests:
+            target.accepted_chat_requests.remove(str(current_user.id))
+            await target.save()
+            
+    # 3. Delete Matches & Swipes
+    await Match.find(Match.user_id == str(current_user.id), Match.leader_id == user_id).delete()
+    await Match.find(Match.user_id == user_id, Match.leader_id == str(current_user.id)).delete()
+    
+    await Swipe.find(Swipe.swiper_id == str(current_user.id), Swipe.target_id == user_id).delete()
+    await Swipe.find(Swipe.swiper_id == user_id, Swipe.target_id == str(current_user.id)).delete()
+    
+    # 4. Delete Notifications (Invites/Requests)
+    await Notification.find(Notification.sender_id == str(current_user.id), Notification.recipient_id == user_id).delete()
+    await Notification.find(Notification.sender_id == user_id, Notification.recipient_id == str(current_user.id)).delete()
+    
+    # 5. Remove from Teams where blocker is leader? (Optional based on 'wont appear for project matches', but usually blocking implies removing from potential future interactions. Removing from existing active teams is drastic but requested 'remove trace'.)
+    # For now, we stick to removing matches/connections. Removing from active team is complex logic (votes etc).
+    
+    return {"status": "blocked"}
+
+@router.post("/{user_id}/unblock")
+async def unblock_user(user_id: str, current_user: User = Depends(get_current_user)):
+    await Block.find(Block.blocker_id == str(current_user.id), Block.blocked_id == user_id).delete()
+    return {"status": "unblocked"}
+
+# --- NETWORK & CONNECTIONS (UPDATED) ---
+
 @router.get("/network", response_model=List[User])
 async def get_my_network(current_user: User = Depends(get_current_user)):
-    """Fetches users connected via Teams or accepted Chat requests"""
-    # Verify current_user.id is a string
     my_id = str(current_user.id)
     
-    # Fetch teams where the user is a member
+    # Fetch Blocked List
+    blocks = await Block.find({"$or": [{"blocker_id": my_id}, {"blocked_id": my_id}]}).to_list()
+    blocked_ids = set([b.blocked_id if b.blocker_id == my_id else b.blocker_id for b in blocks])
+
     teams = await Team.find(Team.members == my_id).to_list()
-    
     connected_ids = set()
     for t in teams:
         for m in t.members:
-            if m != my_id:
-                connected_ids.add(m)
+            if m != my_id: connected_ids.add(m)
     
-    # Add manual connections (chat requests)
     if current_user.accepted_chat_requests:
-        for c in current_user.accepted_chat_requests:
-            connected_ids.add(c)
+        for c in current_user.accepted_chat_requests: connected_ids.add(c)
         
-    if not connected_ids: 
-        return []
-        
-    valid_ids = [ObjectId(uid) for uid in connected_ids if ObjectId.is_valid(uid)]
+    # Filter out blocked
+    final_ids = [uid for uid in connected_ids if uid not in blocked_ids]
+    
+    if not final_ids: return []
+    valid_ids = [ObjectId(uid) for uid in final_ids if ObjectId.is_valid(uid)]
     users = await User.find({"_id": {"$in": valid_ids}}).to_list()
     return users
 
 @router.get("/search", response_model=List[dict])
 async def search_users_directory(query: Optional[str] = None, skill: Optional[str] = None, current_user: User = Depends(get_current_user)):
-    """Searches all users and flags those already connected"""
-    teams = await Team.find(Team.members == str(current_user.id)).to_list()
+    my_id = str(current_user.id)
+    
+    # Fetch Blocked List
+    blocks = await Block.find({"$or": [{"blocker_id": my_id}, {"blocked_id": my_id}]}).to_list()
+    blocked_ids = set([b.blocked_id if b.blocker_id == my_id else b.blocker_id for b in blocks])
+
+    teams = await Team.find(Team.members == my_id).to_list()
     connected_ids = set(current_user.accepted_chat_requests)
     for t in teams:
-        for m in t.members:
-            connected_ids.add(m)
+        for m in t.members: connected_ids.add(m)
 
     all_users = await User.find_all().to_list()
     results = []
@@ -96,24 +141,22 @@ async def search_users_directory(query: Optional[str] = None, skill: Optional[st
     s_lower = skill.lower() if skill else ""
     
     for u in all_users:
-        if str(u.id) == str(current_user.id): continue
+        if str(u.id) == my_id: continue
+        if str(u.id) in blocked_ids: continue # Skip blocked users
+        
         match_q = True
-        if q_lower:
-            match_q = q_lower in u.username.lower() or (u.full_name and q_lower in u.full_name.lower())
+        if q_lower: match_q = q_lower in u.username.lower() or (u.full_name and q_lower in u.full_name.lower())
         match_s = True
-        if s_lower:
-            match_s = any(s_lower in s.name.lower() for s in u.skills)
+        if s_lower: match_s = any(s_lower in s.name.lower() for s in u.skills)
             
         if match_q and match_s:
             is_conn = str(u.id) in connected_ids
-            # Check for pending request status
             pending = await Notification.find_one(
                 Notification.recipient_id == str(u.id), 
-                Notification.sender_id == str(current_user.id),
+                Notification.sender_id == my_id,
                 Notification.type == "connection_request",
                 Notification.action_status == "pending"
             )
-            
             results.append({
                 "id": str(u.id),
                 "username": u.username,
@@ -128,6 +171,14 @@ async def search_users_directory(query: Optional[str] = None, skill: Optional[st
 @router.post("/connection-request/{target_id}")
 async def send_connection_request(target_id: str, current_user: User = Depends(get_current_user)):
     if not ObjectId.is_valid(target_id): raise HTTPException(400, "Invalid ID")
+    
+    # Check Block
+    is_blocked = await Block.find_one({"$or": [
+        {"blocker_id": str(current_user.id), "blocked_id": target_id},
+        {"blocker_id": target_id, "blocked_id": str(current_user.id)}
+    ]})
+    if is_blocked: raise HTTPException(403, "Cannot connect with this user")
+
     target = await User.get(target_id)
     if not target: raise HTTPException(404, "User not found")
         
@@ -148,31 +199,23 @@ async def send_connection_request(target_id: str, current_user: User = Depends(g
         action_status="pending"
     ).insert()
     return {"status": "sent"}
-
 # --- REQUEST MANAGEMENT ---
 
 @router.get("/requests/received", response_model=List[dict])
 async def get_received_requests(current_user: User = Depends(get_current_user)):
-    notifs = await Notification.find(
-        Notification.recipient_id == str(current_user.id),
-        Notification.type == "connection_request",
-        Notification.action_status == "pending"
-    ).to_list()
-    
+    notifs = await Notification.find(Notification.recipient_id == str(current_user.id), Notification.type == "connection_request", Notification.action_status == "pending").to_list()
     results = []
     for n in notifs:
         sender = await User.get(n.sender_id)
         if sender:
-            # FIX: Manually Convert to Dict and ensure ID is string to prevent Pydantic Error
+            # Filter blocked senders
+            is_blocked = await Block.find_one({"$or": [{"blocker_id": str(current_user.id), "blocked_id": str(sender.id)}, {"blocker_id": str(sender.id), "blocked_id": str(current_user.id)}]})
+            if is_blocked: continue
+
             sender_dict = sender.dict()
             sender_dict["id"] = str(sender.id)
             if "_id" in sender_dict: sender_dict["_id"] = str(sender.id)
-            
-            results.append({
-                "request_id": str(n.id),
-                "user": sender_dict,
-                "created_at": n.created_at
-            })
+            results.append({"request_id": str(n.id), "user": sender_dict, "created_at": n.created_at})
     return results
 
 @router.get("/requests/sent", response_model=List[dict])
@@ -511,7 +554,10 @@ async def update_skills_legacy(data: SkillsUpdate, current_user: User = Depends(
 async def get_user_details(user_id: str, current_user: User = Depends(get_current_user)):
     if not ObjectId.is_valid(user_id): raise HTTPException(status_code=404, detail="Invalid ID")
     
-    is_blocked = await Block.find_one(Block.blocker_id == user_id, Block.blocked_id == str(current_user.id))
+    is_blocked = await Block.find_one({"$or": [
+        {"blocker_id": user_id, "blocked_id": str(current_user.id)},
+        {"blocker_id": str(current_user.id), "blocked_id": user_id}
+    ]})
     if is_blocked:
         raise HTTPException(status_code=403, detail="Profile Unavailable")
 

@@ -122,6 +122,7 @@ async def create_team(team_data: TeamCreate, current_user: User = Depends(get_cu
     new_team = Team(
         name=team_data.name, 
         description=team_data.description,
+        leader_id=str(current_user.id),
         members=[str(current_user.id)], 
         needed_skills=team_data.needed_skills,
         active_needed_skills=team_data.active_needed_skills, 
@@ -140,7 +141,7 @@ async def get_all_teams():
 async def get_team_details(team_id: str, current_user: Optional[User] = Depends(get_optional_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404, detail="Team not found")
-    
+    actual_leader_id = team.leader_id or (team.members[0] if team.members else None)
     member_objects = []
     for uid in team.members:
         user = await User.get(uid)
@@ -161,7 +162,7 @@ async def get_team_details(team_id: str, current_user: Optional[User] = Depends(
 
     return {
         "id": str(team.id), "name": team.name, "description": team.description,
-        "leader_id": team.members[0], "members": member_objects,
+        "leader_id": actual_leader_id, "members": member_objects,
         "needed_skills": team.needed_skills,
         "active_needed_skills": team.active_needed_skills, 
         "project_roadmap": team.project_roadmap,
@@ -180,7 +181,8 @@ async def get_team_details(team_id: str, current_user: Optional[User] = Depends(
 async def update_team_details(team_id: str, data: TeamUpdate, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
-    if str(current_user.id) != team.members[0]: raise HTTPException(403, "Only Leader can edit")
+    leader_id = team.leader_id or team.members[0]
+    if str(current_user.id) != leader_id: raise HTTPException(403, "Only Leader can edit")
     if team.status == "completed": raise HTTPException(400, "Project is locked (Completed)")
 
     if data.name: team.name = data.name
@@ -198,6 +200,8 @@ async def update_team_details(team_id: str, data: TeamUpdate, current_user: User
     skills_text = ' '.join(team.active_needed_skills) if team.active_needed_skills else ' '.join(team.needed_skills)
     team_text = f"{team.name} {team.description} {skills_text}"
     team.embedding = generate_embedding(team_text)
+    if not team.leader_id:
+        team.leader_id = team.members[0]
 
     await team.save()
     return team
@@ -210,7 +214,9 @@ async def send_invite(team_id: str, req: InviteRequest, current_user: User = Dep
     if not team: raise HTTPException(404, detail="Team not found")
     if team.status == "completed": raise HTTPException(400, "Project is locked")
     
-    is_leader = str(current_user.id) == team.members[0]
+    real_leader_id = team.leader_id or team.members[0]
+    
+    is_leader = str(current_user.id) == real_leader_id
     if is_leader:
         candidate_id = req.target_user_id
         leader_id = str(current_user.id)
@@ -219,7 +225,7 @@ async def send_invite(team_id: str, req: InviteRequest, current_user: User = Dep
         type = "team_invite"
     else:
         candidate_id = str(current_user.id)
-        leader_id = team.members[0]
+        leader_id = real_leader_id
         req.target_user_id = leader_id 
         new_status = "requested"
         msg = f"{current_user.username} wants to join '{team.name}'."
@@ -239,6 +245,7 @@ async def send_invite(team_id: str, req: InviteRequest, current_user: User = Dep
     await manager.send_personal_message({"event": "notification", "notification": {"_id": str(notif.id), "message": msg, "type": type, "is_read": False, "related_id": team_id, "sender_id": str(current_user.id)}}, req.target_user_id)
     return {"status": "sent", "new_match_status": new_status}
 
+
 @router.post("/{team_id}/members")
 async def add_member(team_id: str, req: InviteRequest, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
@@ -246,7 +253,7 @@ async def add_member(team_id: str, req: InviteRequest, current_user: User = Depe
     if team.status == "completed": raise HTTPException(400, "Project is locked")
     
     candidate_id = req.target_user_id
-    leader_id = team.members[0]
+    leader_id = team.leader_id or team.members[0]
     
     if candidate_id not in team.members:
         team.members.append(candidate_id)
@@ -284,7 +291,7 @@ async def add_member(team_id: str, req: InviteRequest, current_user: User = Depe
 async def reject_invite(team_id: str, req: InviteRequest, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
-    leader_id = team.members[0]
+    leader_id = team.leader_id or team.members[0]
     is_leader = str(current_user.id) == leader_id
     if is_leader: candidate_id = req.target_user_id
     else: candidate_id = str(current_user.id)
@@ -312,8 +319,11 @@ async def remove_member(team_id: str, user_id: str, current_user: User = Depends
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
     if team.status == "completed": raise HTTPException(400, "Project is locked")
-    if str(current_user.id) != team.members[0]: raise HTTPException(403)
-    if user_id == team.members[0]: raise HTTPException(400)
+    
+    leader_id = team.leader_id or team.members[0]
+    
+    if str(current_user.id) != leader_id: raise HTTPException(403)
+    if user_id == leader_id: raise HTTPException(400)
     
     if user_id in team.members:
         team.members.remove(user_id)
@@ -335,7 +345,9 @@ async def create_task(team_id: str, req: CreateTaskRequest, current_user: User =
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
     if team.status == "completed": raise HTTPException(400, "Project is locked")
-    if str(current_user.id) != team.members[0]: raise HTTPException(403, "Only Leader can assign tasks")
+    
+    leader_id = team.leader_id or team.members[0]
+    if str(current_user.id) != leader_id: raise HTTPException(403, "Only Leader can assign tasks")
     
     try: dt = datetime.fromisoformat(req.deadline.replace('Z', '+00:00'))
     except ValueError: dt = datetime.now() + timedelta(days=1) 
@@ -352,7 +364,10 @@ async def delete_task(team_id: str, task_id: str, current_user: User = Depends(g
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
     if team.status == "completed": raise HTTPException(400, "Project is locked")
-    if str(current_user.id) != team.members[0]: raise HTTPException(403, "Only Leader can delete tasks")
+    
+    leader_id = team.leader_id or team.members[0]
+    if str(current_user.id) != leader_id: raise HTTPException(403, "Only Leader can delete tasks")
+    
     initial_len = len(team.tasks)
     team.tasks = [t for t in team.tasks if str(t.id) != str(task_id)]
     if len(team.tasks) == initial_len: raise HTTPException(404, "Task not found")
@@ -423,8 +438,11 @@ async def initiate_task_extension(team_id: str, task_id: str, req: ExtensionRequ
     task_idx = next((i for i, t in enumerate(team.tasks) if str(t.id) == str(task_id)), None)
     if task_idx is None: raise HTTPException(404, "Task not found")
     task = team.tasks[task_idx]
+    
+    leader_id = team.leader_id or team.members[0]
     uid = str(current_user.id)
-    if uid != task.assignee_id and uid != team.members[0]: raise HTTPException(403, "Not allowed")
+    if uid != task.assignee_id and uid != leader_id: raise HTTPException(403, "Not allowed")
+    
     try: new_dt = datetime.fromisoformat(req.new_deadline.replace('Z', '+00:00'))
     except: raise HTTPException(400, "Invalid date")
     ext_req = ExtensionRequest(is_active=True, requested_deadline=new_dt, initiator_id=uid, votes={uid: "approve"})
@@ -490,6 +508,8 @@ async def get_team_tasks(team_id: str):
     results = []
     now = datetime.now()
     has_changes = False 
+    leader_id = team.leader_id or team.members[0]
+    
     for t in team.tasks:
         assignee = await User.get(t.assignee_id)
         is_overdue = False
@@ -501,7 +521,7 @@ async def get_team_tasks(team_id: str):
             if not t.warning_sent and time_left > timedelta(0) and time_left < timedelta(days=1):
                 t.warning_sent = True
                 has_changes = True
-                await Notification(recipient_id=t.assignee_id, sender_id=team.members[0], message=f"Task '{t.description}' deadline in 24h!", type="info", related_id=team_id).insert()
+                await Notification(recipient_id=t.assignee_id, sender_id=leader_id, message=f"Task '{t.description}' deadline in 24h!", type="info", related_id=team_id).insert()
                 await manager.send_personal_message({"event": "dashboardUpdate"}, t.assignee_id)
         ext_active = t.extension_request is not None and t.extension_request.is_active
         ext_votes = len(t.extension_request.votes) if ext_active else 0
@@ -534,11 +554,17 @@ async def get_team_tasks(team_id: str):
 async def transfer_leadership(team_id: str, req: TransferRequest, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
-    if str(current_user.id) != team.members[0]: raise HTTPException(403, "Only Leader can transfer leadership")
+    
+    leader_id = team.leader_id or team.members[0]
+    if str(current_user.id) != leader_id: raise HTTPException(403, "Only Leader can transfer leadership")
+    
     if team.status == "completed": raise HTTPException(400, "Project is locked")
     if req.new_leader_id not in team.members: raise HTTPException(400, "New leader must be a member")
+    
     team.members.remove(req.new_leader_id)
     team.members.insert(0, req.new_leader_id)
+    team.leader_id = req.new_leader_id # <--- UPDATE LEADER ID
+    
     chat_group = await ChatGroup.find_one(ChatGroup.team_id == str(team.id))
     if chat_group:
         chat_group.admin_id = req.new_leader_id
@@ -570,7 +596,8 @@ async def get_stack_suggestions(request: SuggestionRequest, current_user: User =
 @router.post("/{team_id}/roadmap")
 async def create_team_roadmap(team_id: str, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
-    if not team or str(current_user.id) != team.members[0]: raise HTTPException(403)
+    leader_id = team.leader_id or team.members[0]
+    if not team or str(current_user.id) != leader_id: raise HTTPException(403)
     
     weeks = 4
     if team.target_completion_date:
@@ -597,14 +624,18 @@ async def leave_project(team_id: str, req: ActionWithExplanation, current_user: 
     uid = str(current_user.id)
     if uid not in team.members: raise HTTPException(400, "Not a member")
     if team.status == "completed": raise HTTPException(400, "Project is completed and locked. You cannot leave.")
-    if uid == team.members[0]: raise HTTPException(400, "Leader cannot leave. Delete project instead.")
+    
+    leader_id = team.leader_id or team.members[0]
+    if uid == leader_id: raise HTTPException(400, "Leader cannot leave. Delete project instead.")
+    
     existing = next((r for r in team.member_requests if r.target_user_id == uid and r.is_active), None)
     if existing: raise HTTPException(400, "Request already active")
+    
     if team.status == "planning":
         team.members.remove(uid)
         await team.save()
-        await Notification(recipient_id=team.members[0], sender_id=uid, message=f"{current_user.username} left the team. Reason: {req.explanation}", type="info").insert()
-        await manager.send_personal_message({"event": "dashboardUpdate"}, team.members[0])
+        await Notification(recipient_id=leader_id, sender_id=uid, message=f"{current_user.username} left the team. Reason: {req.explanation}", type="info").insert()
+        await manager.send_personal_message({"event": "dashboardUpdate"}, leader_id)
         await Match.find(Match.project_id == team_id, Match.user_id == uid).delete()
         return {"status": "left"}
     else:
@@ -621,10 +652,13 @@ async def leave_project(team_id: str, req: ActionWithExplanation, current_user: 
 async def remove_member_request(team_id: str, user_id: str, req: ActionWithExplanation, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404, "Team not found")
-    if str(current_user.id) != team.members[0]: raise HTTPException(403, "Only Leader can remove members")
+    
+    leader_id = team.leader_id or team.members[0]
+    if str(current_user.id) != leader_id: raise HTTPException(403, "Only Leader can remove members")
     if team.status == "completed": raise HTTPException(400, "Project is locked")
-    if user_id == team.members[0]: raise HTTPException(400, "Cannot remove leader")
+    if user_id == leader_id: raise HTTPException(400, "Cannot remove leader")
     if user_id not in team.members: raise HTTPException(400, "User not in team")
+    
     target_user = await User.get(user_id)
     target_name = target_user.username if target_user else "Member"
     if team.status == "planning":
@@ -658,6 +692,8 @@ async def vote_member_request(team_id: str, request_id: str, vote: VoteRequest, 
     total_members = len(team.members)
     approvals = sum(1 for v in req.votes.values() if v == "approve")
     threshold = math.ceil(total_members * 0.7)
+    
+    leader_id = team.leader_id or team.members[0]
     status_msg = "voted"
     if approvals >= threshold:
         req.is_active = False
@@ -666,7 +702,7 @@ async def vote_member_request(team_id: str, request_id: str, vote: VoteRequest, 
             team.members.remove(target_id)
             await Match.find(Match.project_id == team_id, Match.user_id == target_id).delete()
             action_text = "left" if req.type == "leave" else "removed from"
-            await Notification(recipient_id=target_id, sender_id=team.members[0], message=f"You have {action_text} {team.name}.", type="info").insert()
+            await Notification(recipient_id=target_id, sender_id=leader_id, message=f"You have {action_text} {team.name}.", type="info").insert()
             for m_id in team.members:
                 await Notification(recipient_id=m_id, sender_id=uid, message=f"Vote passed. Member {action_text} the team.", type="info").insert()
                 await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
@@ -684,7 +720,9 @@ async def vote_member_request(team_id: str, request_id: str, vote: VoteRequest, 
 async def initiate_deletion(team_id: str, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
-    if str(current_user.id) != team.members[0]: raise HTTPException(403)
+    
+    leader_id = team.leader_id or team.members[0]
+    if str(current_user.id) != leader_id: raise HTTPException(403)
     if team.status == "completed": raise HTTPException(400, "Project is locked")
     if len(team.members) == 1:
         await team.delete()
@@ -731,7 +769,8 @@ async def vote_deletion(team_id: str, vote: VoteRequest, current_user: User = De
 async def initiate_completion(team_id: str, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
-    if str(current_user.id) != team.members[0]: raise HTTPException(403)
+    leader_id = team.leader_id or team.members[0]
+    if str(current_user.id) != leader_id: raise HTTPException(403)
     if len(team.members) == 1:
         team.status = "completed"
         team.is_looking_for_members = False
@@ -798,7 +837,7 @@ async def rate_teammate(team_id: str, req: RatingRequest, current_user: User = D
 async def reset_match(team_id: str, req: InviteRequest, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
-    leader_id = team.members[0]
+    leader_id = team.leader_id or team.members[0]
     is_leader = str(current_user.id) == leader_id
     if is_leader: candidate_id = req.target_user_id
     else: candidate_id = str(current_user.id)
