@@ -55,6 +55,15 @@ INTENT_EXAMPLES = {
     "SEARCH_REQUEST": [
         "find a project", "search for teams", "projects using react", "looking for a team to join"
     ],
+    "PROJECT_QUERY": [
+        "show tasks with extended deadlines",
+        "who has the most work?",
+        "which project is falling behind?",
+        "show me all completed tasks",
+        "is anyone overloaded?",
+        "summary of my projects",
+        "what is Alice working on?"
+    ],
     "GENERAL_QUERY": [
         "Hello, how are you?", 
         "tell me about my ongoing projects",  # <--- ADD THIS
@@ -85,6 +94,8 @@ class AgentState(TypedDict):
     user_skills: list[str]
     intent: str
     final_response: str
+    history: list[dict] 
+    is_confirmed: bool
 
 async def find_relevant_project(user_input: str, projects: list[Team]):
     """
@@ -167,6 +178,44 @@ async def router_node(state: AgentState):
     2. Few-Shot LLM (Smart & Flexible)
     """
     question = state["question"]
+
+    history = state.get("history", [])
+    # Check if the last message from the BOT was a confirmation question
+    if history and len(history) >= 2:
+        last_bot_msg = history[-1]["content"]
+        
+        # Only activate if the bot actually asked for confirmation
+        if "Are you sure" in last_bot_msg or "confirm" in last_bot_msg.lower():
+            
+            user_input = question.lower().strip()
+            
+            # 1. NEGATION CHECK (The Safety Guard)
+            # If the user shows ANY hesitation, we assume "NO" and process as a new command.
+            negation_keywords = ["no", "wait", "stop", "don't", "cancel", "change my mind", "actually", "nevermind"]
+            
+            if any(word in user_input for word in negation_keywords):
+                # User hesitated ("Actually no", "Wait stop"). 
+                # We DO NOT confirm. We let the standard router handle this as a new request.
+                pass 
+                
+            # 2. CONFIRMATION CHECK
+            # We only proceed here if they didn't say "no".
+            else:
+                confirm_keywords = ["yes", "y", "confirm", "sure", "do it", "proceed", "okay", "correct", "delete"]
+                
+                if any(word in user_input for word in confirm_keywords):
+                    # User confirmed! Retrieve original intent.
+                    original_user_msg = history[-2]["content"] 
+                    print(f"🔄 Confirmation Received! Re-processing: '{original_user_msg}'")
+                    
+                    re_routed = await router_node({**state, "question": original_user_msg, "history": []})
+                    
+                    return {
+                        "intent": re_routed["intent"], 
+                        "is_confirmed": True, 
+                        "question": original_user_msg # Overwrite with original command
+                    }
+
     print(f"🧠 Routing: {question[:30]}...")
     
     # --- PHASE 1: SEMANTIC ROUTING (Speed Layer) ---
@@ -197,6 +246,7 @@ async def router_node(state: AgentState):
     - SEND_MESSAGE
     - CODE_REQUEST
     - SEARCH_REQUEST
+    - PROJECT_QUERY
     - GENERAL_QUERY
 
     [FEW-SHOT EXAMPLES]
@@ -206,6 +256,8 @@ async def router_node(state: AgentState):
     Input: "Tell everyone the meeting is at 5" -> SEND_MESSAGE
     Input: "How do I center a div?" -> CODE_REQUEST
     Input: "Find me a team doing AI" -> SEARCH_REQUEST
+    Input: "Who has the most open tasks?" -> PROJECT_QUERY
+    Input: "Show tasks that have been extended" -> PROJECT_QUERY
     Input: "Hello, how are you?" -> GENERAL_QUERY
 
     [YOUR TASK]
@@ -434,9 +486,17 @@ async def manager_node(state: AgentState):
     if intent == "DELETE_PROJECT":
         # Case 1: Solo Project (Delete Immediately)
         if len(target_team.members) == 1:
+            
+            # --- PASTE THIS CHECK HERE ---
+            if not state.get("is_confirmed"):
+                return {
+                    "final_response": f"⚠️ **Wait!** Are you sure you want to permanently DELETE **{target_team.name}**?\n\nType **'Yes'** to confirm."
+                }
+            # -----------------------------
+
             await target_team.delete()
-            return {"final_response": f"🗑️ **{target_team.name}** has been permanently deleted."}
-        
+            return {"final_response": f"🗑️ **{target_team.name}** has been permanently deleted."}  
+             
         # Case 2: Team Project (Start Vote)
         if target_team.deletion_request and target_team.deletion_request.is_active:
             return {"final_response": f"⚠️ A deletion vote is already active for **{target_team.name}**."}
@@ -775,7 +835,6 @@ async def manager_node(state: AgentState):
             req = ExtensionRequest(
                 task_id=str(target_task.id),
                 requested_deadline=new_deadline,
-                reason="Requested via AI Chat",
                 initiator_id=user_id,
                 votes={user_id: "approve"}
             )
@@ -1044,6 +1103,89 @@ async def search_node(state: AgentState):
 
 # app/services/chatbot_services.py
 
+async def data_analyst_node(state: AgentState):
+    """
+    Handles complex queries about project status, history, and workloads.
+    PRIVACY: Fetches ONLY projects where the user is a member.
+    """
+    print("🧠 Data Analyst Node Active")
+    user_id = state["user_id"]
+    
+    # 1. FETCH ONLY USER'S PROJECTS (Privacy Enforcement)
+    user_teams = await Team.find(Team.members == user_id).to_list()
+    
+    if not user_teams:
+        return {"final_response": "You aren't part of any projects yet, so I can't analyze any data."}
+
+    # 2. PREPARE CONTEXT (The "Sandbox")
+    # We build a massive text report of everything happening in these specific teams.
+    projects_data = []
+    
+    for team in user_teams:
+        # A. Resolve Member Names (Map IDs to Usernames)
+        member_map = {}
+        for m_id in team.members:
+            u = await User.get(m_id)
+            if u: member_map[str(u.id)] = u.username
+
+        # B. Format Tasks with Details
+        tasks_list = []
+        for t in team.tasks:
+            assignee_name = member_map.get(t.assignee_id, "Unknown")
+            
+            # Check for extensions
+            is_extended = "Yes" if (t.extension_request or t.was_extended) else "No"
+            
+            tasks_list.append({
+                "description": t.description,
+                "status": t.status,
+                "assignee": assignee_name,
+                "deadline": t.deadline.strftime("%Y-%m-%d"),
+                "is_extended": is_extended, 
+            })
+
+        leader_id = team.members[0] if team.members else "None"
+
+        projects_data.append({
+            "project_name": team.name,
+            "description": team.description,
+            "role": "Leader" if leader_id == user_id else "Member",
+            "members": list(member_map.values()),
+            "tasks": tasks_list
+        })
+
+    # 3. GENERATE ANALYTICAL RESPONSE
+    system_prompt = f"""
+    You are the Project Data Analyst.
+    
+    ACCESS LEVEL: AUTHENTICATED USER ({user_id})
+    DATA SOURCE: {json.dumps(projects_data, indent=2)}
+    
+    USER QUESTION: "{state['question']}"
+    
+    INSTRUCTIONS:
+    - The JSON data above contains REAL-TIME project stats.
+    - Search through it to answer the user's specific question.
+    - If asking about "Extended Deadlines", look for 'is_extended': "Yes".
+    - If asking about "Workload", count the tasks per assignee.
+    - If asking about "Status", check the task status fields.
+    
+    FORMATTING:
+    - Provide a clear, professional summary.
+    - Use Markdown tables or bullet points if comparing data.
+    - Do not reveal raw JSON or IDs.
+    """
+
+    try:
+        completion = await client.chat.completions.create(
+            model=MENTOR_MODEL,
+            messages=[{"role": "user", "content": system_prompt}]
+        )
+        return {"final_response": completion.choices[0].message.content}
+    except Exception as e:
+        print(f"Analyst Error: {e}")
+        return {"final_response": "I couldn't analyze the project data at the moment."}
+
 async def chat_node(state: AgentState):
     """
     Handles General Conversation + Project Q&A.
@@ -1241,6 +1383,7 @@ workflow.add_node("manager", manager_node)
 workflow.add_node("coder", coder_node)
 workflow.add_node("searcher", search_node)
 workflow.add_node("chatter", chat_node)
+workflow.add_node("data_analyst", data_analyst_node)
 
 # Set Entry Point
 workflow.set_entry_point("router")
@@ -1249,6 +1392,7 @@ workflow.set_entry_point("router")
 def route_decision(state):
     i = state["intent"]
     if i == "CREATE_PROJECT": return "planner"
+    if i == "PROJECT_QUERY": return "data_analyst"
     if i in ["DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER", "ASSIGN_TASK", "EXTEND_DEADLINE", "SHOW_TASKS", "SEND_MESSAGE", "DAILY_BRIEFING", "ANALYZE_TEAM"]: return "manager"
     if i == "CODE_REQUEST": return "coder"
     if i == "SEARCH_REQUEST": return "searcher"
@@ -1259,6 +1403,7 @@ workflow.add_conditional_edges(
     route_decision,
     {
         "planner": "planner",
+        "data_analyst": "data_analyst",
         "manager": "manager",
         "coder": "coder",
         "searcher": "searcher",
@@ -1268,6 +1413,7 @@ workflow.add_conditional_edges(
 
 # All nodes end after they work
 workflow.add_edge("planner", END)
+workflow.add_edge("data_analyst", END)
 workflow.add_edge("manager", END)
 workflow.add_edge("coder", END)
 workflow.add_edge("searcher", END)
@@ -1286,7 +1432,7 @@ async def generate_chat_reply(question: str, user_skills: list[str], user_id: st
     # 1. Fetch History
     try:
         past_msgs_db = await ChatMessage.find(ChatMessage.user_id == user_id)\
-            .sort("-timestamp").limit(6).to_list()
+            .sort("-timestamp").limit(15).to_list()
         past_msgs_db.reverse()
         
         formatted_history = []
@@ -1303,7 +1449,8 @@ async def generate_chat_reply(question: str, user_skills: list[str], user_id: st
         "user_id": user_id,
         "intent": "",
         "final_response": "",
-        "history": formatted_history
+        "history": formatted_history,
+        "is_confirmed": False
     }
     
     # 3. Run Graph
