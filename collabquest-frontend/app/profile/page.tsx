@@ -9,13 +9,14 @@ import {
     Save, ArrowLeft, Clock, Calendar, Code2, Star, Heart, User, Plus, X, 
     Trash2, Zap, CheckCircle, AlertTriangle, Briefcase, Eye, EyeOff, Check,
     GraduationCap, Award, Linkedin, Code, ExternalLink, ShieldCheck, Loader2,
-    Globe, Twitter, Github, Instagram, Mail
+    Globe, Twitter, Github, Instagram, Mail, Lock, Camera, Edit2
 } from "lucide-react";
 import Link from "next/link";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const PRESET_SKILLS = ["React", "Python", "Node.js", "TypeScript", "Next.js", "Tailwind", "MongoDB", "Firebase"];
 const AGES = Array.from({ length: 50 }, (_, i) => (i + 16).toString());
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface TimeRange { start: string; end: string; }
 interface DayAvailability { day: string; enabled: boolean; slots: TimeRange[]; }
@@ -23,17 +24,16 @@ interface SocialLink { platform: string; url: string; }
 interface Achievement { title: string; date?: string; description?: string; }
 interface Education { institute: string; course: string; year_of_study: string; is_completed: boolean; is_visible: boolean; }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
 export default function ProfilePage() {
     const router = useRouter();
-    const searchParams = useSearchParams(); // Hook for query params
+    const searchParams = useSearchParams();
     const [loading, setLoading] = useState(true);
 
-    // Profile State
+    // --- FIX 1: ADDED MISSING STATE VARIABLES ---
     const [username, setUsername] = useState(""); 
     const [fullName, setFullName] = useState(""); 
     const [avatarUrl, setAvatarUrl] = useState(""); 
+    
     const [email, setEmail] = useState("");
     const [about, setAbout] = useState("");
     const [skills, setSkills] = useState<{ name: string, level: string }[]>([]);
@@ -80,13 +80,13 @@ export default function ProfilePage() {
     useEffect(() => {
         const token = Cookies.get("token");
         if (!token) return router.push("/");
+
         // Handle Linking Success/Error from URL
         const success = searchParams.get("success");
         const error = searchParams.get("error");
         
         if (success === "github_linked") {
             alert("✅ GitHub account linked successfully!");
-            // Clean URL
             router.replace("/profile");
         } else if (error === "github_taken") {
             alert("❌ This GitHub account is already linked to another user.");
@@ -95,11 +95,14 @@ export default function ProfilePage() {
             alert("❌ Failed to link account.");
             router.replace("/profile");
         }
+
         api.get("/users/me").then(res => {
             const u = res.data;
+            // --- FIX 2: POPULATE NEW FIELDS ---
             setUsername(u.username || "");
             setFullName(u.full_name || ""); 
             setAvatarUrl(u.avatar_url || ""); 
+            
             setEmail(u.email || "");
             setAbout(u.about || "");
             setSkills(u.skills || []);
@@ -108,7 +111,6 @@ export default function ProfilePage() {
             if (u.availability?.length > 0) setAvailability(u.availability);
             setAge(u.age || "");
             
-            // New Fields
             setEducationList(u.education || []);
             if (u.visibility_settings) setVisibility(u.visibility_settings);
             if (u.platform_stats) setPlatformStats(u.platform_stats);
@@ -125,8 +127,10 @@ export default function ProfilePage() {
     const saveProfile = async () => {
         try {
             await api.put("/users/profile", {
+                // --- FIX 3: SEND NEW FIELDS TO BACKEND ---
                 full_name: fullName, 
                 avatar_url: avatarUrl, 
+                
                 about, interests, availability,
                 skills: skills.map(s => s.name),
                 is_looking_for_team: isLookingForTeam,
@@ -140,6 +144,12 @@ export default function ProfilePage() {
         } catch (err) { alert("Save failed"); }
     };
 
+    // --- FIX 4: ADD MISSING HELPER FUNCTION ---
+    const editAvatar = () => {
+        const url = prompt("Enter Image URL for Avatar:", avatarUrl);
+        if (url !== null) setAvatarUrl(url);
+    };
+
     const toggleVisibility = async (key: string) => {
         const newSettings = { ...visibility, [key]: !visibility[key] };
         setVisibility(newSettings);
@@ -149,15 +159,12 @@ export default function ProfilePage() {
 
     const connectPlatform = async (platform: string) => {
         if (platform === "github") {
-            // SPECIAL HANDLER FOR GITHUB (OAUTH REDIRECT)
             const token = Cookies.get("token");
             if (!token) return alert("Please log in first.");
-            // Redirect to backend with token as state
             window.location.href = `${API_URL}/auth/link/github?token=${token}`;
             return;
         }
 
-        // Standard API handler for others
         const url = prompt(`Enter your ${platform} Profile URL/Handle:`);
         if (!url) return;
         try {
@@ -177,7 +184,6 @@ export default function ProfilePage() {
     const removeSlot = (d: number, s: number) => { const n = [...availability]; n[d].slots = n[d].slots.filter((_, idx) => idx !== s); setAvailability(n); };
     const updateSlot = (d: number, s: number, f: 'start' | 'end', v: string) => { const n = [...availability]; n[d].slots[s][f] = v; setAvailability(n); };
     
-    // Quiz Functions
     const startSkillTest = async (skill: string) => { if (!confirm(`Start verification for ${skill}?`)) return; setQuizSkill(skill); setLoading(true); try { const res = await api.get(`/skills/start/${skill}`); setQuestions(res.data.questions); setShowQuiz(true); setCurrentQ(0); setUserAnswers([]); setQuizResult(null); setTimer(15); } catch (err) { alert("Error loading test."); } finally { setLoading(false); } };
     const handleAnswer = (optionIndex: number) => { const newAns = [...userAnswers, { id: questions[currentQ].id, selected: optionIndex }]; setUserAnswers(newAns); if (currentQ < questions.length - 1) { setCurrentQ(currentQ + 1); setTimer(15); } else { submitQuiz(newAns); } };
     useEffect(() => { if (!showQuiz || quizResult) return; if (timer > 0) { const t = setTimeout(() => setTimer(timer - 1), 1000); return () => clearTimeout(t); } else { handleAnswer(-1); } }, [timer, showQuiz, quizResult]);
@@ -230,7 +236,50 @@ export default function ProfilePage() {
                     <div className="lg:col-span-4 space-y-8">
                         <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] shadow-xl">
                             <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-purple-400"><User className="w-5 h-5" /> Identity</h3>
+                            
+                            <div className="flex flex-col items-center mb-6">
+                                <div className="relative group cursor-pointer" onClick={editAvatar}>
+                                    <img 
+                                        src={avatarUrl || "https://github.com/shadcn.png"} 
+                                        alt="Avatar" 
+                                        className="w-24 h-24 rounded-full border-4 border-gray-800 object-cover group-hover:opacity-50 transition-opacity" 
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Edit2 className="w-6 h-6 text-white" />
+                                    </div>
+                                    <div className="absolute bottom-0 right-0 bg-purple-600 p-1.5 rounded-full border-2 border-black">
+                                        <Camera className="w-3 h-3 text-white" />
+                                    </div>
+                                </div>
+                                <p className="text-[10px] text-gray-500 mt-2">Tap to edit avatar</p>
+                            </div>
+
                             <div className="space-y-5">
+                                {/* FULL NAME (EDITABLE) */}
+                                <div>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Full Name</label>
+                                        <button onClick={() => toggleVisibility('full_name')} className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.full_name ? "text-green-400" : "text-gray-600 hover:text-gray-400"}`}>
+                                            {visibility.full_name ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                                        </button>
+                                    </div>
+                                    <input 
+                                        className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm focus:border-purple-500 transition-all outline-none" 
+                                        value={fullName} 
+                                        onChange={e => setFullName(e.target.value)} 
+                                        placeholder="Your Full Name" 
+                                    />
+                                </div>
+
+                                {/* USERNAME (READ ONLY) */}
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Username</label>
+                                    <div className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-gray-400 flex items-center gap-3 cursor-not-allowed">
+                                        <Lock className="w-3 h-3 opacity-50" />
+                                        <span className="flex-1 font-mono">@{username}</span>
+                                    </div>
+                                </div>
+
                                 <div>
                                     <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Current Age</label>
                                     <select className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm focus:border-purple-500 transition-all outline-none" value={age} onChange={e => setAge(e.target.value)}>
@@ -243,22 +292,14 @@ export default function ProfilePage() {
                                 <div>
                                     <div className="flex justify-between items-center mb-2">
                                         <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Email Address</label>
-                                        <button 
-                                            onClick={() => toggleVisibility('email')} 
-                                            className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.email ? "text-green-400" : "text-gray-600 hover:text-gray-400"}`}
-                                        >
+                                        <button onClick={() => toggleVisibility('email')} className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.email ? "text-green-400" : "text-gray-600 hover:text-gray-400"}`}>
                                             {visibility.email ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
-                                            {visibility.email ? "Visible to Public" : "Hidden"}
                                         </button>
                                     </div>
                                     <div className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-gray-400 flex items-center gap-3 cursor-not-allowed">
                                         <Mail className="w-4 h-4 opacity-50" />
                                         <span className="flex-1 font-mono">{email}</span>
                                     </div>
-                                    <p className="text-[10px] text-gray-600 mt-1.5 flex items-center gap-1">
-                                        <ShieldCheck className="w-3 h-3" />
-                                        Email cannot be changed manually.
-                                    </p>
                                 </div>
 
                                 <div>
@@ -268,7 +309,7 @@ export default function ProfilePage() {
                             </div>
                         </div>
                         
-                        {/* TRUST SCORE BREAKDOWN (UPDATED) */}
+                        {/* TRUST SCORE BREAKDOWN */}
                         {trustBreakdown && (
                             <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
                                 <div className="flex justify-between items-center mb-4">
@@ -284,7 +325,6 @@ export default function ProfilePage() {
                                         <span className="text-green-400 font-bold">{trustBreakdown.base?.toFixed(1) || "5.0"}</span>
                                     </div>
                                     
-                                    {/* Github Section */}
                                     <div className="bg-black p-3 rounded-xl border border-white/10">
                                         <div className="flex justify-between items-center mb-2">
                                             <span className="text-gray-300 text-sm font-bold flex items-center gap-2"><Github className="w-3 h-3"/> GitHub</span>
@@ -301,7 +341,6 @@ export default function ProfilePage() {
                                         )}
                                     </div>
 
-                                    {/* Other Platforms */}
                                     {trustBreakdown.details?.filter((d:string) => !d.includes("GitHub")).map((detail: string, i: number) => {
                                         const parts = detail.split(":");
                                         const platform = parts[0];
@@ -322,6 +361,26 @@ export default function ProfilePage() {
                                 <Zap className="w-5 h-5" /> Connected Accounts
                             </h3>
                             <div className="space-y-4">
+                                {/* GitHub */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4 flex justify-between items-center">
+                                    <div className="flex items-center gap-3">
+                                        <Github className="w-5 h-5 text-gray-400"/>
+                                        <span className="font-bold text-sm">GitHub</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {connectedAccounts.github ? (
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-gray-500 font-mono">@{connectedAccounts.github}</span>
+                                                <CheckCircle className="w-4 h-4 text-green-500"/>
+                                            </div>
+                                        ) : (
+                                            <button onClick={() => connectPlatform('github')} className="text-xs bg-white/10 px-3 py-1.5 rounded-full text-white hover:bg-white/20 transition flex items-center gap-1">
+                                                <Plus className="w-3 h-3" /> Connect
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
                                 {/* Codeforces */}
                                 <div className="bg-black border border-white/5 rounded-2xl p-4">
                                     <div className="flex justify-between items-start mb-2">
