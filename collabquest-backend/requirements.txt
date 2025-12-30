@@ -1,14 +1,36 @@
+# --- BACKEND CORE ---
 fastapi
 uvicorn[standard]
 motor
 beanie
 pydantic
-httpx       # To talk to GitHub API
-python-jose # To create JWT tokens for your app
 python-dotenv
-bcrypt     # For password hashing
-google-auth-httplib2 # For Google OAuth
-google-generativeai # For AI roadmap features
+requests
+httpx
+
+# --- AUTHENTICATION ---
+python-jose
+bcrypt
+passlib
+email-validator
+
+# --- NEW AI STACK (OpenRouter / RAG) ---
+openai
+langchain
+langgraph
+langchain-community
+langchain-openai
+langchain-huggingface
+langchain-chroma
+chromadb
+sentence-transformers
+pypdf
+tiktoken
+
+# --- LEGACY / GOOGLE STACK (Keep for Roadmap & OAuth) ---
+google-auth-httplib2
+google-generativeai
+langchain-google-genai
 certifi     # For SSL certificates
 sentence-transformers
 numpy

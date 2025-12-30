@@ -268,3 +268,16 @@ class Question(Document):
     correct_index: int
     difficulty: str 
     class Settings: name = "questions"
+
+class ChatMessage(Document):
+    user_id: str
+    question: str
+    answer: str
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+
+    class Settings:
+        name = "chat_messages"
+        indexes = [
+            "user_id",
+            "timestamp"
+        ]

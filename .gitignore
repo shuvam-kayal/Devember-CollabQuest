@@ -4,6 +4,7 @@
 Thumbs.db
 .vscode/
 .idea/
+node_modules/
 
 --- SECRETS (NEVER PUSH THESE) ---
 
@@ -33,9 +34,8 @@ collabquest-frontend/yarn-error.log*
 __pycache__/
 uploads/
 *.pyc
-
 # Add these lines to your .gitignore file
-echo "__pycache__/" >> .gitignore
+echo "_pycache_/" >> .gitignore
 echo "*.pyc" >> .gitignore
 
 chroma_db_matching/

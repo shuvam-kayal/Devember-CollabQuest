@@ -85,6 +85,7 @@ MAIL_FROM=your_email@gmail.com
 MAIL_PORT=587
 MAIL_SERVER=smtp.gmail.com
 MAIL_FROM_NAME="CollabQuest Team"
+OPENROUTER_API_KEY=your_openrouter_api_key
 
 Run the Server:
 uvicorn main:app --reload

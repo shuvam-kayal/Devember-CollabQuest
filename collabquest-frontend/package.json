@@ -22,7 +22,7 @@
     "axios": "^1.13.2",
     "eslint": "^9",
     "eslint-config-next": "16.0.7",
-    "framer-motion": "^12.23.25",
+    "framer-motion": "^12.23.26",
     "install": "^0.13.0",
     "js-cookie": "^3.0.5",
     "lucide-react": "^0.556.0",
