@@ -4,12 +4,13 @@ from pydantic import BaseModel, EmailStr
 from app.auth.utils import (
     get_github_token, get_github_user, update_trust_score, 
     create_access_token, GITHUB_CLIENT_ID, hash_password, verify_password,
-    get_google_token, get_google_user, GOOGLE_CLIENT_ID
+    get_google_token, get_google_user, GOOGLE_CLIENT_ID, verify_token
 )
-from app.models import User, TrustBreakdown
+from app.models import User, TrustBreakdown, ConnectedAccounts
 from app.database import init_db
 from typing import Optional
 import os
+import traceback
 from dotenv import load_dotenv
 
 router = APIRouter()

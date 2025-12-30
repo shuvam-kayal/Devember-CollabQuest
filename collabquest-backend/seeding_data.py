@@ -1,8 +1,18 @@
 import asyncio
 import random
 import os
+import sys
+
+# Force UTF-8 encoding for stdout (Windows fix)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+from datetime import datetime, timedelta
 from app.database import init_db
-from app.models import User, Team, Skill, DayAvailability, TimeRange, Question
+from app.models import (
+    User, Team, Skill, DayAvailability, TimeRange, Question, 
+    TrustBreakdown, Education, Link, Achievement, ConnectedAccounts, 
+    VisibilitySettings, Rating, Task
+)
 
 # Windows Fix
 if os.name == "nt":
@@ -145,6 +155,30 @@ def generate_availability(type="standard"):
         avail_list.append(DayAvailability(day=day, enabled=enabled, slots=slots))
     
     return avail_list
+    
+def generate_education():
+    universities = ["MIT", "Stanford", "Harvard", "UC Berkeley", "IIT Bombay", "Tsinghua University"]
+    courses = ["Computer Science", "Software Engineering", "Data Science", "AI & Robotics"]
+    
+    return [
+        Education(
+            institute=random.choice(universities),
+            course=random.choice(courses),
+            year_of_study=str(random.randint(1, 4)),
+            is_completed=random.choice([True, False]),
+            is_visible=True
+        )
+    ]
+
+def generate_achievements():
+    titles = ["Hackathon Winner", "Open Source Contributor", "Top 500 Coder", "Best UI Design"]
+    return [
+        Achievement(
+            title=random.choice(titles),
+            date="2024-01-15",
+            description="Achieved meaningful impact in tech."
+        )
+    ]
 
 async def seed():
     try:
@@ -178,6 +212,38 @@ async def seed():
                 interests=my_interests,
                 availability=my_avail,
                 is_looking_for_team=True, # Explicitly set
+                
+                # --- NEW FIELDS ---
+                trust_score_breakdown=TrustBreakdown(
+                    base=5.0,
+                    github=random.uniform(0, 1.0),
+                    linkedin=random.uniform(0, 1.0),
+                    codeforces=random.uniform(0, 1.0),
+                    leetcode=random.uniform(0, 1.0),
+                    details=["Verified Student", "Active on GitHub"]
+                ),
+                education=generate_education(),
+                achievements=generate_achievements(),
+                social_links=[
+                    Link(platform="twitter", url=f"https://twitter.com/{name}"),
+                    Link(platform="instagram", url=f"https://instagram.com/{name}")
+                ],
+                professional_links=[
+                    Link(platform="linkedin", url=f"https://linkedin.com/in/{name}"),
+                    Link(platform="github", url=f"https://github.com/{name}")
+                ],
+                connected_accounts=ConnectedAccounts(
+                    github=name,
+                    linkedin=name,
+                    codeforces=name,
+                    leetcode=name
+                ),
+                visibility_settings=VisibilitySettings(),
+                platform_stats={
+                    "github": {"repos": 10, "stars": 50},
+                    "leetcode": {"solved": 200, "rank": 15000}
+                },
+                connections=[], # To be filled later if needed
                 embedding=[] # Initialize empty, will be generated if they login/update
             )
             
@@ -191,6 +257,21 @@ async def seed():
                 created_users.append(existing)
 
         print(f"✅ Users Seeded.")
+        
+        # --- SEED CONNECTIONS ---
+        print("🌱 Seeding Connections...")
+        for user in created_users:
+            # Randomly connect with 2-3 other users
+            others = [u for u in created_users if u.id != user.id]
+            friends = random.sample(others, k=random.randint(1, 3))
+            
+            for friend in friends:
+                if str(friend.id) not in user.connections:
+                    user.connections.append(str(friend.id))
+                    friend.connections.append(str(user.id))
+                    await user.save()
+                    await friend.save()
+        print("✅ Connections Seeded.")
 
         print(f"🌱 Seeding {len(PROJECTS_DATA)} Projects...")
         for title, desc in PROJECTS_DATA:
@@ -206,7 +287,27 @@ async def seed():
                 active_needed_skills=active_needed,
                 project_roadmap={},
                 is_looking_for_members=True,
-                embedding=[]
+                
+                # --- NEW FIELDS ---
+                target_completion_date=datetime.now() + timedelta(days=random.randint(30, 90)),
+                status="planning",
+                target_members=random.randint(3, 6),
+                embedding=[],
+                tasks=[
+                    Task(
+                        description="Initial Setup",
+                        assignee_id=str(leader.id),
+                        deadline=datetime.now() + timedelta(days=7),
+                        status="completed",
+                        completed_at=datetime.now()
+                    ),
+                    Task(
+                        description="Design Database Schema",
+                        assignee_id=str(leader.id),
+                        deadline=datetime.now() + timedelta(days=14),
+                        status="pending"
+                    )
+                ]
             )
             
             existing = await Team.find_one(Team.name == title)

@@ -1,5 +1,10 @@
 import asyncio
 import os
+import sys
+
+# Force UTF-8 encoding for stdout (Windows fix)
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 from app.database import init_db
 from app.models import User, Team, Swipe, Match, Notification, Message, ChatGroup, Question, Block, UnreadCount
 
