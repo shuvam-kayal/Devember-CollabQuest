@@ -116,8 +116,6 @@ function DashboardContent() {
     // Feature State
     const [activeTasks, setActiveTasks] = useState<TaskItem[]>([]);
     const [historyTasks, setHistoryTasks] = useState<TaskItem[]>([]);
-    const [completedProjects, setCompletedProjects] = useState<Team[]>([]);
-    const [favorites, setFavorites] = useState<Team[]>([]);
     const [tasksLoading, setTasksLoading] = useState(true);
 
     // --- FORM STATES ---
@@ -145,7 +143,6 @@ function DashboardContent() {
             fetchUserProfile(activeToken);
             fetchMatches(activeToken);
             fetchDashboardData(activeToken);
-            fetchAllNetworkData(activeToken);
         }
 
         const handleSync = () => {
