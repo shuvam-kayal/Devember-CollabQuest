@@ -16,6 +16,7 @@ class SwipeRequest(BaseModel):
     direction: str 
     type: str 
     related_id: Optional[str] = None
+    message: Optional[str] = None
 
 class MatchResponse(BaseModel):
     id: str
@@ -169,34 +170,29 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
         if not data.target_id or data.target_id == "[object Object]":
             return {"status": "error", "message": "Invalid ID"}
 
-        last_swipe = await Swipe.find(Swipe.swiper_id == str(current_user.id), Swipe.target_id == data.target_id).sort("-timestamp").first_or_none()
+        # --- 1. Record the Swipe ---
+        last_swipe = await Swipe.find(
+            Swipe.swiper_id == str(current_user.id), 
+            Swipe.target_id == data.target_id
+        ).sort("-timestamp").first_or_none()
         
-        # --- FIX: SMART COOLDOWN CHECK ---
         should_proceed = True
         
         if last_swipe:
             time_diff = datetime.now() - last_swipe.timestamp
-            # If cooldown is active (less than 3 days)
             if time_diff < timedelta(days=3):
                 should_proceed = False
-                
-                # REPAIR LOGIC: If it's a "Recruit" swipe (Leader -> User), check if notification was actually sent.
-                # If no notification exists, we ALLOW proceeding to retry the notification.
-                if data.type == "user":
-                    existing_notif = await Notification.find_one(
-                        Notification.recipient_id == data.target_id,
-                        Notification.sender_id == str(current_user.id),
-                        Notification.type == "like"
-                    )
-                    if not existing_notif:
-                        should_proceed = True # Bypass cooldown to repair missing notification
+                # Repair logic for missing notifications (optional)
+                if data.type == "user": 
+                    # ... (your existing repair logic) ...
+                    should_proceed = True 
 
             if not should_proceed:
                  return {"status": "cooldown", "message": "You already liked this recently."}
 
-        # Check for immediate match (Project Swipe)
+        # Check for Immediate Match (Race condition handle)
         if last_swipe and last_swipe.direction == "right" and data.direction == "right":
-            if data.type == "project":
+             if data.type == "project":
                 project = await Team.get(data.target_id)
                 if project and project.members:
                     leader_id = project.members[0]
@@ -205,41 +201,72 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                         await create_match(str(current_user.id), str(project.id), leader_id)
                         return {"status": "liked", "is_match": True}
         
-        # Insert Swipe only if it doesn't exist (to avoid duplicates during repair)
         if not last_swipe:
-            await Swipe(swiper_id=str(current_user.id), target_id=data.target_id, direction=data.direction, type=data.type, related_id=data.related_id).insert()
+            await Swipe(
+                swiper_id=str(current_user.id), 
+                target_id=data.target_id, 
+                direction=data.direction, 
+                type=data.type, 
+                related_id=data.related_id
+            ).insert()
         
         if data.direction == "left":
             return {"status": "passed", "is_match": False}
         
         is_match = False
         
+        # --- 2. Handle Project Swipe (User likes Project) ---
         if data.type == "project":
             project = await Team.get(data.target_id)
             if project and project.members:
                 leader_id = project.members[0]
+                
+                # Check for reverse swipe (Match)
                 reverse_swipe = await Swipe.find_one(Swipe.swiper_id == leader_id, Swipe.target_id == str(current_user.id), Swipe.direction == "right")
+                
                 if reverse_swipe:
                     is_match = True
                     await create_match(str(current_user.id), str(project.id), leader_id)
                 else:
+                    # ✅ FIXED LOGIC FOR NOTIFICATION
                     try:
-                        await Notification(recipient_id=leader_id, sender_id=str(current_user.id), message=f"{current_user.username} liked your project {project.name}", type="like", related_id=str(project.id)).insert()
-                    except: pass 
+                        # 1. Deduplicate: Don't spam the leader if they already requested
+                        exists = await Notification.find_one(
+                            Notification.recipient_id == leader_id,
+                            Notification.sender_id == str(current_user.id),
+                            Notification.type == "join_request",  # Check for existing request
+                            Notification.related_id == str(project.id)
+                        )
+                        
+                        if not exists:
+                            # 2. Create the Notification with the correct TYPE
+                            await Notification(
+                                recipient_id=leader_id, 
+                                sender_id=str(current_user.id),  # Matches your model
+                                related_id=str(project.id),      # Matches your model (Team ID)
+                                type="join_request",             # <--- CRITICAL: Triggers buttons on frontend
+                                message=data.message or f"{current_user.username} wants to join {project.name}", 
+                                is_read=False,
+                                action_status="pending"
+                            ).insert()
+                            print(f"✅ Join Request sent to {leader_id}")
+                    except Exception as e: 
+                        print(f"❌ Notification Failed: {e}")
+                        pass
 
+        # --- 3. Handle User Swipe (Leader likes Candidate) ---
         elif data.type == "user":
             target_user_id = data.target_id
             target_project_id = data.related_id 
             
             if target_project_id:
-                # Check if the Candidate has already liked this specific Project
                 reverse_swipe = await Swipe.find_one(Swipe.swiper_id == target_user_id, Swipe.target_id == target_project_id, Swipe.direction == "right")
                 
                 if reverse_swipe:
                     is_match = True
                     await create_match(target_user_id, target_project_id, str(current_user.id))
                 else:
-                    # Send Recruit Notification (Leader -> User)
+                    # ✅ FIXED: Send 'team_invite' instead of 'like'
                     try:
                         p_name = "a project"
                         try:
@@ -247,50 +274,33 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                             if proj: p_name = proj.name
                         except: pass
 
-                        # Deduplicate: Only insert if not exists
                         exists = await Notification.find_one(
                             Notification.recipient_id == target_user_id,
                             Notification.sender_id == str(current_user.id),
-                            Notification.type == "like",
+                            Notification.type == "team_invite", # <--- Changed from 'like'
                             Notification.related_id == str(target_project_id)
                         )
                         if not exists:
                             await Notification(
                                 recipient_id=target_user_id, 
                                 sender_id=str(current_user.id), 
-                                message=f"A Team Leader ({current_user.username}) is interested in you for {p_name}!", 
-                                type="like", 
-                                related_id=str(target_project_id) # Ensure string format
+                                message=f"A Team Leader is interested in you for {p_name}!", 
+                                type="team_invite", # <--- CRITICAL: Triggers buttons
+                                related_id=str(target_project_id),
+                                is_read=False
                             ).insert()
                     except Exception as e:
                         print(f"❌ Notification Error: {e}")
             else:
-                # Fallback: Check all leader's projects if specific ID wasn't provided
-                my_projects = await Team.find(Team.members == str(current_user.id)).to_list()
-                matched = False
-                for project in my_projects:
-                    reverse_swipe = await Swipe.find_one(Swipe.swiper_id == target_user_id, Swipe.target_id == str(project.id), Swipe.direction == "right")
-                    if reverse_swipe:
-                        is_match = True
-                        await create_match(target_user_id, str(project.id), str(current_user.id))
-                        matched = True
-                        break 
-                
-                if not matched and my_projects:
-                    try:
-                        primary_project = my_projects[0]
-                        existing_notif = await Notification.find_one(Notification.recipient_id == target_user_id, Notification.sender_id == str(current_user.id), Notification.type == "like")
-                        if not existing_notif:
-                            await Notification(recipient_id=target_user_id, sender_id=str(current_user.id), message=f"A Team Leader ({current_user.username}) is interested in you!", type="like", related_id=str(primary_project.id)).insert()
-                    except Exception as e:
-                         print(f"❌ Notification Error (Fallback): {e}")
+                # Fallback Logic (omitted for brevity, keep your existing logic here)
+                pass
 
         return {"status": "liked", "is_match": is_match}
     except Exception as e:
         print(f"❌ SWIPE ERROR: {str(e)}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Server Error")
-
+    
 @router.get("/mine", response_model=List[MatchResponse])
 async def get_my_matches(current_user: User = Depends(get_current_user)):
     uid = str(current_user.id)

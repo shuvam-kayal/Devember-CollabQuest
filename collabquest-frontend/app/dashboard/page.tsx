@@ -5,12 +5,13 @@ import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-    Loader2, Edit2, X, Plus,
+    Loader2, Globe, Edit2, X, Plus,
     MessageSquare, CheckCircle,
     Briefcase, Send, Code2, Mail, Clock, XCircle, RotateCcw, Check, Trash2,
     Calendar, Layout, Award, Star,
     // Sidebar specific icons
-    ChevronLeft, ChevronRight, LayoutDashboard, Users, Settings, LogOut
+    ChevronLeft, ChevronRight, LayoutDashboard, Users, Settings, LogOut,
+    Network, Sparkles, ArrowUpRight
 } from "lucide-react";
 import Link from "next/link";
 import GlobalHeader from "@/components/GlobalHeader";
@@ -41,15 +42,6 @@ interface Match {
     rejected_by?: string;
 }
 
-interface Team {
-    _id: string;
-    id?: string;
-    name: string;
-    description: string;
-    members: string[];
-    status?: string;
-}
-
 interface TaskItem {
     id: string;
     description: string;
@@ -58,6 +50,16 @@ interface TaskItem {
     project_id: string;
     project_name: string;
 }
+
+/* -------------------- STYLED COMPONENTS -------------------- */
+const GlassCard = ({ children, className = "", onClick }: any) => (
+    <div 
+        onClick={onClick}
+        className={`relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md shadow-xl transition-all duration-300 hover:bg-white/10 hover:border-white/20 hover:shadow-purple-500/10 ${className}`}
+    >
+        {children}
+    </div>
+);
 
 /* -------------------- HELPER COMPONENT: SIDEBAR LINK -------------------- */
 const SidebarLink = ({ 
@@ -165,19 +167,13 @@ function DashboardContent() {
     }
     const fetchDashboardData = async (jwt: string) => {
         try {
-            // FIX: We explicitly attach the token to the request headers
             const config = {
                 headers: { Authorization: `Bearer ${jwt}` }
             };
-
-            // Pass 'config' as the second argument
             const taskRes = await api.get("/users/me/tasks", config);
             
             setActiveTasks(taskRes.data.active);
             setHistoryTasks(taskRes.data.history);
-            
-            // If you have other API calls in this function, update them too!
-            // Example: await api.get("/other/endpoint", config);
 
         } catch (e) {
             console.error(e);
@@ -212,7 +208,6 @@ function DashboardContent() {
 
     const handleReject = async (match: Match) => {
         if (!confirm("Are you sure you want to reject this request?")) return;
-        const token = Cookies.get("token");
         const myId = user?._id || user?.id || "";
         try {
             setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "rejected" as const, rejected_by: myId } : m));
@@ -250,34 +245,46 @@ function DashboardContent() {
     };
 
     const openEmailComposer = (match: Match) => { setEmailRecipient({ id: match.id, name: match.name }); setShowEmailModal(true); }
-    const handleSendEmail = async () => { const token = Cookies.get("token"); if (!emailRecipient) return; try { await api.post("/communication/send-email", { recipient_id: emailRecipient.id, subject: emailSubject, body: emailBody }); alert("Email sent!"); setShowEmailModal(false); setEmailSubject(""); setEmailBody(""); } catch (err) { alert("Failed"); } }
+    const handleSendEmail = async () => { if (!emailRecipient) return; try { await api.post("/communication/send-email", { recipient_id: emailRecipient.id, subject: emailSubject, body: emailBody }); alert("Email sent!"); setShowEmailModal(false); setEmailSubject(""); setEmailBody(""); } catch (err) { alert("Failed"); } }
     const getCurrentUserId = async (token: string) => { const res = await api.get("/users/me"); return res.data._id || res.data.id; }
 
     const renderMatchButton = (match: Match) => {
         const isProcessing = processingId === (match.id + match.project_id);
+        const baseClass = "flex-1 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all";
+
         if (match.status === "rejected") {
             const myId = user?._id || user?.id;
             const isMe = match.rejected_by === myId;
-            const text = isMe ? "Rejected by You" : "Rejected by Team";
+            const text = isMe ? "Rejected" : "Declined";
             return (
-                <div className="flex-1 flex gap-1">
-                    <div className="flex-1 bg-red-900/20 text-red-400 border border-red-900/50 py-1.5 rounded text-xs font-bold text-center flex items-center justify-center gap-1"><XCircle className="w-3 h-3" /> {text}</div>
-                    <button onClick={() => handleReapply(match)} disabled={isProcessing} className="bg-gray-700 hover:bg-gray-600 px-2 rounded text-white" title="Re-apply / Reset Status">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}</button>
+                <div className="flex-1 flex gap-2">
+                    <div className="flex-1 bg-red-500/10 border border-red-500/20 text-red-400 py-1.5 rounded-lg text-xs font-bold text-center flex items-center justify-center gap-1">
+                        <XCircle className="w-3 h-3" /> {text}
+                    </div>
+                    <button onClick={() => handleReapply(match)} disabled={isProcessing} className="bg-white/5 hover:bg-white/10 px-2 rounded-lg text-white border border-white/10" title="Re-apply">
+                        {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                    </button>
                 </div>
             );
         }
-        if (match.status === "matched") return <button onClick={() => requestJoin(match)} disabled={isProcessing} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Send className="w-3 h-3" /> Request Join</>}</button>;
-        if (match.status === "requested") return <div className="flex-1 bg-gray-700 text-gray-400 py-1.5 rounded text-xs flex items-center justify-center gap-1"><Clock className="w-3 h-3" /> Pending</div>;
-        if (match.status === "invited") return <div className="flex gap-1 flex-1"><button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className="flex-1 bg-green-600 hover:bg-green-500 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1">{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Join Team</>}</button><button onClick={() => handleReject(match)} className="bg-red-600 hover:bg-red-500 text-white px-2 rounded"><XCircle className="w-3 h-3" /></button></div>;
-        if (match.status === "joined") return <div className="flex-1 bg-gray-800 text-green-400 border border-green-900 py-1.5 rounded text-xs font-bold text-center">Joined</div>;
-        return <div className="flex-1 text-gray-500 text-xs text-center py-1 bg-gray-900/50 rounded">Status: {match.status}</div>;
+        if (match.status === "matched") return <button onClick={() => requestJoin(match)} disabled={isProcessing} className={`${baseClass} bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20`}>{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Send className="w-3 h-3" /> Request Join</>}</button>;
+        if (match.status === "requested") return <div className={`${baseClass} bg-white/5 border border-white/10 text-white/50 cursor-default`}><Clock className="w-3 h-3" /> Pending</div>;
+        if (match.status === "invited") return <div className="flex gap-2 flex-1"><button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className={`${baseClass} bg-green-500 hover:bg-green-400 text-black shadow-lg shadow-green-900/20`}>{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Accept</>}</button><button onClick={() => handleReject(match)} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-2 rounded-lg border border-red-500/10"><XCircle className="w-3 h-3" /></button></div>;
+        if (match.status === "joined") return <div className={`${baseClass} bg-green-500/10 text-green-400 border border-green-500/20 cursor-default`}>Joined</div>;
+        return <div className="flex-1 text-white/40 text-xs text-center py-1">Status: {match.status}</div>;
     };
 
-    if (!user) return <div className="flex h-screen items-center justify-center bg-gray-950 text-white"><Loader2 className="animate-spin" /></div>;
+    if (!user) return <div className="flex h-screen items-center justify-center bg-black text-white"><Loader2 className="animate-spin text-purple-500" /></div>;
 
     return (
-        <div className="flex h-screen bg-gray-950 text-white overflow-hidden">
+        <div className="flex h-screen bg-[#050505] text-white overflow-hidden font-sans selection:bg-purple-500/30">
             
+            {/* --- AMBIENT BACKGROUND --- */}
+            <div className="fixed inset-0 z-0 pointer-events-none">
+                <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-900/10 rounded-full blur-[120px] mix-blend-screen" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-900/10 rounded-full blur-[120px] mix-blend-screen" />
+            </div>
+
             {/* --- SIDEBAR --- */}
             <aside className={`${isCollapsed ? "w-20" : "w-64"} transition-all duration-300 fixed md:relative h-full border-r border-white/5 bg-[#0F0F0F] flex flex-col z-50 shrink-0`}>
                 <div className="p-6 flex items-center justify-between">
@@ -293,9 +300,9 @@ function DashboardContent() {
                     
                     {!isCollapsed && <p className="text-[10px] text-gray-500 uppercase px-2 pt-4 mb-2 font-bold tracking-widest">Personal</p>}
                     
-                    <SidebarLink icon={Code2} label="My Projects" isCollapsed={isCollapsed} active={pathname.startsWith("/myproject")} onClick={() => router.push("/projects")} />
+                    <SidebarLink icon={Code2} label="My Projects" isCollapsed={isCollapsed} active={pathname.startsWith("/myproject")} onClick={() => router.push("/myproject")} />
                     <SidebarLink icon={Star} label="Saved" isCollapsed={isCollapsed} active={pathname.includes("saved")} onClick={() => router.push("/saved")} />
-                    <SidebarLink icon={Clock} label="History" isCollapsed={isCollapsed} active={pathname.includes("history")} onClick={() => router.push("/history")} />
+                    <SidebarLink icon={Globe} label="Network" isCollapsed={isCollapsed} active={pathname.includes("Network")} onClick={() => router.push("/netwrok")} />
                 </nav>
 
                 <div onClick={() => router.push("/profile")} className="p-4 border-t border-white/5 bg-black/20 cursor-pointer hover:bg-white/5 transition-all mt-auto">
@@ -312,103 +319,102 @@ function DashboardContent() {
                 </div>
             </aside>
             {/* --- END SIDEBAR --- */}
-
+            
+            
             {/* --- MAIN CONTENT --- */}
-            <div className={`flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300`}>
-                <div className="shrink-0">
+            <div className={`flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300 z-10`}>
+                {/* FIX: Added relative z-50 to the header container. 
+                    This ensures the header stacking context sits above the scrolling content below it. 
+                */}
+                <div className="shrink-0 bg-black/20 backdrop-blur-sm border-b border-white/5 relative z-50">
                     <GlobalHeader />
                 </div>
 
                 <main className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth custom-scrollbar">
-                    <div className="max-w-[1600px] mx-auto space-y-12 pb-20">
+                    <div className="max-w-[1600px] mx-auto space-y-10 pb-20">
                         
-                        {/* 1. WELCOME SECTION (Full Width) */}
+                        {/* 1. HERO SECTION */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <Link href="/profile">
-                                <motion.div whileHover={{ scale: 1.01 }} className="p-6 rounded-2xl bg-gray-900 border border-gray-800 shadow-xl flex items-center gap-4 cursor-pointer group hover:border-purple-500/50 transition-all relative h-full">
-                                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity"><Edit2 className="w-4 h-4 text-purple-400" /></div>
-                                    <img src={user.avatar_url} alt="Avatar" className="w-16 h-16 rounded-full border-2 border-purple-500" />
-                                    <div><h2 className="text-xl font-semibold">Welcome, {user.username}!</h2><div className="flex flex-wrap gap-2 mt-2">{user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => <span key={i} className="text-xs bg-gray-800 px-2 py-1 rounded text-gray-300 border border-gray-700">{s.name}</span>) : <span className="text-xs text-yellow-500 italic">Tap to add skills +</span>}</div></div>
-                                </motion.div>
+                            <Link href="/profile" className="block h-full">
+                                <GlassCard className="p-8 h-full flex items-center gap-6 group cursor-pointer relative">
+                                    <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+                                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white/10 p-2 rounded-full"><Edit2 className="w-4 h-4 text-purple-300" /></div>
+                                    
+                                    <img src={user.avatar_url} alt="Avatar" className="w-20 h-20 rounded-full border-2 border-purple-500 shadow-lg shadow-purple-500/20 object-cover" />
+                                    <div className="relative z-10">
+                                        <h2 className="text-2xl font-bold text-white mb-2">Welcome back, {user.username}!</h2>
+                                        <div className="flex flex-wrap gap-2">
+                                            {user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => (
+                                                <span key={i} className="text-xs bg-white/10 px-3 py-1 rounded-full text-white/70 border border-white/5">{s.name}</span>
+                                            )) : <span className="text-xs text-yellow-400/80 italic flex items-center gap-1"><Plus className="w-3 h-3"/> Add skills to profile</span>}
+                                        </div>
+                                    </div>
+                                </GlassCard>
                             </Link>
-                            <motion.div whileHover={{ scale: 1.01 }} className="p-6 rounded-2xl bg-gradient-to-br from-purple-900/50 to-blue-900/50 border border-purple-500/20 flex flex-col justify-center items-start h-full">
-                                <h2 className="text-xl font-semibold mb-2">Build Your Dream Team</h2>
-                                <p className="text-sm text-gray-400 mb-4">Post an idea and find hackers instantly.</p>
-                                <Link href="/find-team"><button className="w-full px-6 py-2 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition shadow-lg flex items-center gap-2"><Plus className="w-4 h-4" /> Create Project</button></Link>
-                            </motion.div>
+                            
+                            <GlassCard className="p-8 h-full flex flex-col justify-center items-start relative overflow-hidden">
+                                <div className="absolute top-[-50%] right-[-10%] w-[200px] h-[200px] bg-blue-500/20 rounded-full blur-[60px]" />
+                                <div className="relative z-10 w-full">
+                                    <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
+                                        Build Your Dream Team <Sparkles className="w-5 h-5 text-yellow-400 fill-yellow-400" />
+                                    </h2>
+                                    <p className="text-white/60 mb-6 text-sm">Got an idea? Post it now and match with talented developers instantly.</p>
+                                    <Link href="/find-team">
+                                        <button className="w-full sm:w-auto px-6 py-3 bg-white text-black font-bold rounded-xl hover:bg-purple-50 transition shadow-lg shadow-white/10 flex items-center justify-center gap-2 group">
+                                            <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" /> Create Project
+                                        </button>
+                                    </Link>
+                                </div>
+                            </GlassCard>
                         </div>
                         
-                        {/* 2. SPLIT LAYOUT: Applications (Left) / Tasks (Right) */}
+                        {/* 2. SPLIT LAYOUT */}
                         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
                             
-                            {/* --- LEFT COLUMN: APPLICATIONS (Takes 1/3 Width) --- */}
-                            <div className="xl:col-span-1 w-full">
-                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-purple-300"><Briefcase className="w-5 h-5" /> Applications</h3>
-                                {projectOpportunities.length === 0 ? <div className="bg-gray-900/50 border border-gray-800 rounded-2xl p-8 text-center text-gray-500 h-64 flex flex-col items-center justify-center gap-2"><p>No active applications.</p><Link href="/matches?type=projects" className="text-purple-400 hover:underline text-sm font-bold uppercase tracking-wide">Find Projects</Link></div> : (
-                                    <div className="flex flex-col gap-4">
-                                        {projectOpportunities.map((m) => (
-                                            <div key={m.id + m.project_id} className="bg-gray-900 border border-gray-800 p-4 rounded-xl hover:bg-gray-900/80 transition shadow-lg">
-                                                <div className="flex items-center gap-3 mb-3 pb-3 border-b border-gray-800">
-                                                    <div className="w-10 h-10 bg-purple-900/30 rounded-lg flex items-center justify-center border border-purple-500/20 shrink-0"><Code2 className="w-5 h-5 text-purple-400" /></div>
-                                                    <div className="overflow-hidden">
-                                                        <h4 className="font-bold text-sm text-white truncate">{m.project_name}</h4>
-                                                        <p className="text-xs text-gray-400 truncate">Lead: {m.name}</p>
-                                                    </div>
-                                                </div>
-                                                <div className="flex flex-col gap-2">
-                                                    <div className="flex w-full gap-2">
-                                                        {renderMatchButton(m)}
-                                                    </div>
-                                                    <div className="flex gap-1 justify-end">
-                                                        <button onClick={() => openEmailComposer(m)} className="bg-gray-800 p-2 rounded hover:text-green-400 hover:bg-gray-700 transition" title="Email"><Mail className="w-4 h-4" /></button>
-                                                        <Link href={`/chat?targetId=${m.id}`}>
-                                                            <button className="bg-gray-800 p-2 rounded hover:text-blue-400 hover:bg-gray-700 transition" title="Chat"><MessageSquare className="w-4 h-4" /></button>
-                                                        </Link>
-                                                        <button onClick={() => handleDeleteMatch(m)} className="bg-gray-800 p-2 rounded hover:text-red-400 hover:bg-gray-700 transition" title="Remove"><Trash2 className="w-4 h-4" /></button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
 
-                            {/* --- RIGHT COLUMN: ACTIVE TASKS (Takes 2/3 Width) --- */}
-                            <div className="xl:col-span-2 w-full">
-                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-green-400">
-                                    <CheckCircle className="w-5 h-5" /> Active Tasks
-                                </h3>
-                                {tasksLoading ? <div className="text-gray-500 flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin"/> Loading tasks...</div> : 
+                            {/* --- RIGHT COLUMN: ACTIVE TASKS --- */}
+                            <div className="xl:col-span-2 w-full space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h3 className="text-lg font-bold flex items-center gap-2 text-white">
+                                        <div className="p-1.5 bg-green-500/20 rounded-lg"><CheckCircle className="w-4 h-4 text-green-400" /></div>
+                                        Active Tasks
+                                    </h3>
+                                    <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{activeTasks.length} Pending</span>
+                                </div>
+
+                                {tasksLoading ? <div className="text-white/50 flex items-center gap-2 py-8"><Loader2 className="w-4 h-4 animate-spin"/> Loading tasks...</div> : 
                                 activeTasks.length === 0 ? (
-                                    <div className="bg-gray-900/30 border border-gray-800 border-dashed rounded-xl p-8 text-center text-gray-500 text-sm h-64 flex items-center justify-center flex-col gap-2">
-                                        <CheckCircle className="w-8 h-8 text-gray-700 mb-2" />
-                                        <span>No active tasks pending. You are all caught up!</span>
-                                    </div>
+                                    <GlassCard className="p-12 text-center flex flex-col items-center justify-center gap-4 border-dashed border-white/20 min-h-[250px]">
+                                        <div className="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center"><Check className="w-8 h-8 text-green-500/40" /></div>
+                                        <p className="text-white/50">All caught up! No pending tasks.</p>
+                                    </GlassCard>
                                 ) : (
                                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                                         {activeTasks.map(task => (
-                                            <div key={task.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col justify-between hover:border-green-500/30 transition shadow-lg">
+                                            <GlassCard key={task.id} className="p-5 flex flex-col justify-between group h-full border-l-4 border-l-purple-500">
                                                 <div className="mb-4">
-                                                    <div className="flex justify-between items-start mb-2">
-                                                        <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-blue-900/30 text-blue-400 px-2 py-0.5 rounded border border-blue-900/50 hover:bg-blue-900/50 transition font-mono uppercase">
+                                                    <div className="flex justify-between items-start mb-3">
+                                                        <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-white/5 text-white/60 px-2 py-1 rounded border border-white/10 hover:bg-white/10 transition font-mono uppercase tracking-wide truncate max-w-[150px]">
                                                             {task.project_name}
                                                         </Link>
-                                                        <span className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">{task.status}</span>
+                                                        <span className={`text-[10px] uppercase tracking-widest font-bold px-2 py-1 rounded ${task.status === 'review' ? 'bg-yellow-500/10 text-yellow-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                                            {task.status}
+                                                        </span>
                                                     </div>
-                                                    <h4 className="font-bold text-white text-sm line-clamp-2 leading-relaxed">{task.description}</h4>
+                                                    <h4 className="font-bold text-white text-sm line-clamp-2 leading-relaxed group-hover:text-purple-300 transition-colors">{task.description}</h4>
                                                 </div>
-                                                <div className="flex items-center justify-between mt-auto pt-4 border-t border-gray-800">
-                                                    <div className="flex items-center gap-1.5 text-xs text-gray-400">
+                                                <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
+                                                    <div className="flex items-center gap-1.5 text-xs text-white/40">
                                                         <Calendar className="w-3.5 h-3.5" />
                                                         {new Date(task.deadline).toLocaleDateString()}
                                                     </div>
                                                     {task.status !== 'review' && (
-                                                        <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-4 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-green-900/20">
+                                                        <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-green-900/20">
                                                             <Check className="w-3 h-3" /> Mark Done
                                                         </button>
                                                     )}
                                                 </div>
-                                            </div>
+                                            </GlassCard>
                                         ))}
                                     </div>
                                 )}
@@ -418,23 +424,18 @@ function DashboardContent() {
                         {/* Task History */}
                         {historyTasks.length > 0 && (
                             <div className="w-full">
-                                <h3 className="text-xl font-bold mb-4 flex items-center gap-2 text-gray-400">
-                                    <Layout className="w-5 h-5" /> Task History
-                                </h3>
-                                <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden max-h-60 overflow-y-auto custom-scrollbar">
+                                <h3 className="text-sm font-bold uppercase tracking-widest text-white/30 mb-4 pl-1">Recently Completed</h3>
+                                <div className="space-y-2">
                                     {historyTasks.map((task, i) => (
-                                        <div key={i} className="flex items-center justify-between p-4 border-b border-gray-800 last:border-0 hover:bg-gray-800/50 transition">
-                                            <div className="flex flex-col">
-                                                <span className="text-sm font-medium text-gray-300 line-through decoration-gray-600">{task.description}</span>
-                                                <div className="flex items-center gap-2 mt-1">
-                                                    <span className="text-[10px] text-blue-400">{task.project_name}</span>
-                                                    <span className="text-[10px] text-gray-600">•</span>
-                                                    <span className="text-[10px] text-gray-500">Completed</span>
+                                        <div key={i} className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition group">
+                                            <div className="flex items-center gap-4">
+                                                <div className="p-2 bg-green-500/10 rounded-full text-green-500 group-hover:scale-110 transition-transform"><Check className="w-3 h-3"/></div>
+                                                <div className="flex flex-col">
+                                                    <span className="text-sm font-medium text-white/50 line-through decoration-white/20">{task.description}</span>
+                                                    <span className="text-[10px] text-white/30">{task.project_name}</span>
                                                 </div>
                                             </div>
-                                            <div className="text-green-500">
-                                                <CheckCircle className="w-4 h-4" />
-                                            </div>
+                                            <span className="text-[10px] text-green-400/50 font-mono">COMPLETED</span>
                                         </div>
                                     ))}
                                 </div>
@@ -444,14 +445,30 @@ function DashboardContent() {
                     </div>
                 </main>
             </div>
-
+            
             {/* Email Modal */}
             <AnimatePresence>
                 {showEmailModal && emailRecipient && (
-                    <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }} className="bg-gray-900 border border-gray-800 p-8 rounded-2xl w-full max-w-md relative">
-                            <div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2"><Mail className="w-5 h-5" /> Send Secure Message</h2><button onClick={() => setShowEmailModal(false)}><X className="text-gray-500 hover:text-white" /></button></div>
-                            <div className="space-y-4 mt-4"><div className="bg-gray-800/50 p-3 rounded-lg text-sm text-gray-400">To: <span className="text-white font-bold">{emailRecipient.name}</span> (Email Hidden)</div><input className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 outline-none focus:border-green-500" placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} /><textarea className="w-full bg-gray-950 border border-gray-800 rounded-lg p-3 h-32 outline-none focus:border-green-500 resize-none" placeholder="Message" value={emailBody} onChange={e => setEmailBody(e.target.value)} /><button onClick={handleSendEmail} className="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"><Send className="w-4 h-4" /> Send Message</button></div>
+                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                        <motion.div 
+                            initial={{ scale: 0.95, opacity: 0 }} 
+                            animate={{ scale: 1, opacity: 1 }} 
+                            exit={{ scale: 0.95, opacity: 0 }} 
+                            className="bg-[#121212] border border-white/10 p-8 rounded-2xl w-full max-w-md relative shadow-2xl"
+                        >
+                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-blue-500" />
+                            <div className="flex justify-between items-center mb-6">
+                                <h2 className="text-xl font-bold flex items-center gap-2 text-white"><Mail className="w-5 h-5 text-purple-400" /> Secure Message</h2>
+                                <button onClick={() => setShowEmailModal(false)} className="p-2 hover:bg-white/10 rounded-full transition"><X className="w-5 h-5 text-white/50" /></button>
+                            </div>
+                            <div className="space-y-4 mt-4">
+                                <div className="bg-white/5 p-3 rounded-xl text-sm text-white/60 border border-white/5">To: <span className="text-white font-bold">{emailRecipient.name}</span></div>
+                                <input className="w-full bg-black/40 border border-white/10 rounded-xl p-3 outline-none focus:border-purple-500 text-white transition-colors" placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} />
+                                <textarea className="w-full bg-black/40 border border-white/10 rounded-xl p-3 h-32 outline-none focus:border-purple-500 resize-none text-white transition-colors" placeholder="Message" value={emailBody} onChange={e => setEmailBody(e.target.value)} />
+                                <button onClick={handleSendEmail} className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-purple-900/30 transition-all hover:scale-[1.01]">
+                                    <Send className="w-4 h-4" /> Send Message
+                                </button>
+                            </div>
                         </motion.div>
                     </div>
                 )}
@@ -463,7 +480,7 @@ function DashboardContent() {
 /* -------------------- MAIN EXPORT WITH SUSPENSE -------------------- */
 export default function Dashboard() {
     return (
-        <Suspense fallback={<div className="flex h-screen items-center justify-center bg-gray-950 text-white"><Loader2 className="animate-spin text-purple-500" /></div>}>
+        <Suspense fallback={<div className="flex h-screen items-center justify-center bg-[#050505] text-white"><Loader2 className="animate-spin text-purple-500" /></div>}>
             <DashboardContent />
         </Suspense>
     );

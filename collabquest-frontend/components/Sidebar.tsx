@@ -5,7 +5,8 @@ import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { 
   Code2, LayoutDashboard, Users, Briefcase, Star, Clock, 
-  ChevronLeft, ChevronRight, Settings 
+  ChevronLeft, ChevronRight, Settings, 
+  Globe
 } from "lucide-react";
 
 
@@ -77,7 +78,7 @@ export default function Sidebar({ isCollapsed, setIsCollapsed }: SidebarProps) {
                 {/* --- MODIFIED SECTION END --- */}
 
                 <SidebarLink icon={Star} label="Saved" isCollapsed={isCollapsed} active={pathname.includes("saved")} onClick={() => router.push("/saved")} id="onboarding-saved" />
-                <SidebarLink icon={Clock} label="History" isCollapsed={isCollapsed} active={pathname.includes("history")} onClick={() => router.push("/history")} id="onboarding-history" />
+                <SidebarLink icon={Globe} label="Network" isCollapsed={isCollapsed} active={pathname.includes("network")} onClick={() => router.push("/netwrok")} id="onboarding-network" />
             </nav>
 
             <div onClick={() => router.push("/profile")} className="p-4 border-t border-white/5 bg-black/20 cursor-pointer hover:bg-white/5 transition-all">

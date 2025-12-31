@@ -24,23 +24,16 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      // Use api instance (automatically handles Base URL)
-      const response = await api.post("/auth/register/email", { 
-        email, 
-        username, 
-        password 
-      });
-
+      const response = await api.post("/auth/register/email", { email, username, password });
       const data = response.data;
 
-      // Store token in Cookies (matching your Login page logic)
-      Cookies.set("token", data.token);
-      
+      // logic handled in catch
+
+      // Save token and redirect
+      Cookies.set("token", data.token, { expires: 7 });
       router.push("/dashboard");
     } catch (err: any) {
-      console.error("Registration failed", err);
-      // specific error message from backend or fallback
-      setError(err.response?.data?.detail || "Registration failed. Try again.");
+      setError(err.response?.data?.detail || "An error occurred. Try again.");
     } finally {
       setLoading(false);
     }

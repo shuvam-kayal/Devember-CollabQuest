@@ -1,20 +1,22 @@
 "use client";
-
-import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
+import GlobalHeader from "@/components/GlobalHeader";
 import { 
-    Save, ArrowLeft, Clock, Calendar, Code2, Star, User, Plus, X, 
-    Trash2, Zap, CheckCircle, AlertTriangle, Briefcase, Eye, EyeOff, 
-    GraduationCap, Award, Linkedin, Github, Globe, Twitter, Instagram, Mail, ShieldCheck, Loader2
+    Save,Sparkles, ArrowLeft, Clock, Calendar, Code2, Star, Heart, User, Plus, X, 
+    Trash2, Zap, CheckCircle, AlertTriangle, Briefcase, Eye, EyeOff, Check,
+    GraduationCap, Award, Linkedin, Code, ExternalLink, ShieldCheck, Loader2,
+    Globe, Twitter, Github, Instagram, Mail, Lock, Camera, Edit2
 } from "lucide-react";
 import Link from "next/link";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const PRESET_SKILLS = ["React", "Python", "Node.js", "TypeScript", "Next.js", "Tailwind", "MongoDB", "Firebase"];
 const AGES = Array.from({ length: 50 }, (_, i) => (i + 16).toString());
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface TimeRange { start: string; end: string; }
 interface DayAvailability { day: string; enabled: boolean; slots: TimeRange[]; }
@@ -22,11 +24,16 @@ interface SocialLink { platform: string; url: string; }
 interface Achievement { title: string; date?: string; description?: string; }
 interface Education { institute: string; course: string; year_of_study: string; is_completed: boolean; is_visible: boolean; }
 
-export default function ProfileClient() {
+function ProfilePage() {
     const router = useRouter();
+    const searchParams = useSearchParams();
     const [loading, setLoading] = useState(true);
 
-    // Profile State
+    // --- FIX 1: ADDED MISSING STATE VARIABLES ---
+    const [username, setUsername] = useState(""); 
+    const [fullName, setFullName] = useState(""); 
+    const [avatarUrl, setAvatarUrl] = useState(""); 
+    
     const [email, setEmail] = useState("");
     const [about, setAbout] = useState("");
     const [skills, setSkills] = useState<{ name: string, level: string }[]>([]);
@@ -48,6 +55,7 @@ export default function ProfileClient() {
     const [platformStats, setPlatformStats] = useState<any>({});
     const [trustBreakdown, setTrustBreakdown] = useState<any>(null);
     const [visibility, setVisibility] = useState<any>({
+        full_name: true,
         linkedin: true, codeforces: true, leetcode: true, 
         education: true, achievements: true, ratings: true,
         email: false 
@@ -72,8 +80,29 @@ export default function ProfileClient() {
     useEffect(() => {
         const token = Cookies.get("token");
         if (!token) return router.push("/");
+
+        // Handle Linking Success/Error from URL
+        const success = searchParams.get("success");
+        const error = searchParams.get("error");
+        
+        if (success === "github_linked") {
+            alert("✅ GitHub account linked successfully!");
+            router.replace("/profile");
+        } else if (error === "github_taken") {
+            alert("❌ This GitHub account is already linked to another user.");
+            router.replace("/profile");
+        } else if (error) {
+            alert("❌ Failed to link account.");
+            router.replace("/profile");
+        }
+
         api.get("/users/me").then(res => {
             const u = res.data;
+            // --- FIX 2: POPULATE NEW FIELDS ---
+            setUsername(u.username || "");
+            setFullName(u.full_name || ""); 
+            setAvatarUrl(u.avatar_url || ""); 
+            
             setEmail(u.email || "");
             setAbout(u.about || "");
             setSkills(u.skills || []);
@@ -82,7 +111,6 @@ export default function ProfileClient() {
             if (u.availability?.length > 0) setAvailability(u.availability);
             setAge(u.age || "");
             
-            // New Fields
             setEducationList(u.education || []);
             if (u.visibility_settings) setVisibility(u.visibility_settings);
             if (u.platform_stats) setPlatformStats(u.platform_stats);
@@ -94,11 +122,15 @@ export default function ProfileClient() {
             setConnectedAccounts(u.connected_accounts || {});
             setRatings(u.ratings_received || []);
         }).finally(() => setLoading(false));
-    }, []);
+    }, [searchParams, router]);
 
     const saveProfile = async () => {
         try {
             await api.put("/users/profile", {
+                // --- FIX 3: SEND NEW FIELDS TO BACKEND ---
+                full_name: fullName, 
+                avatar_url: avatarUrl, 
+                
                 about, interests, availability,
                 skills: skills.map(s => s.name),
                 is_looking_for_team: isLookingForTeam,
@@ -112,6 +144,12 @@ export default function ProfileClient() {
         } catch (err) { alert("Save failed"); }
     };
 
+    // --- FIX 4: ADD MISSING HELPER FUNCTION ---
+    const editAvatar = () => {
+        const url = prompt("Enter Image URL for Avatar:", avatarUrl);
+        if (url !== null) setAvatarUrl(url);
+    };
+
     const toggleVisibility = async (key: string) => {
         const newSettings = { ...visibility, [key]: !visibility[key] };
         setVisibility(newSettings);
@@ -120,6 +158,13 @@ export default function ProfileClient() {
     };
 
     const connectPlatform = async (platform: string) => {
+        if (platform === "github") {
+            const token = Cookies.get("token");
+            if (!token) return alert("Please log in first.");
+            window.location.href = `${API_URL}/auth/link/github?token=${token}`;
+            return;
+        }
+
         const url = prompt(`Enter your ${platform} Profile URL/Handle:`);
         if (!url) return;
         try {
@@ -139,13 +184,12 @@ export default function ProfileClient() {
     const removeSlot = (d: number, s: number) => { const n = [...availability]; n[d].slots = n[d].slots.filter((_, idx) => idx !== s); setAvailability(n); };
     const updateSlot = (d: number, s: number, f: 'start' | 'end', v: string) => { const n = [...availability]; n[d].slots[s][f] = v; setAvailability(n); };
     
-    // Quiz Functions
     const startSkillTest = async (skill: string) => { if (!confirm(`Start verification for ${skill}?`)) return; setQuizSkill(skill); setLoading(true); try { const res = await api.get(`/skills/start/${skill}`); setQuestions(res.data.questions); setShowQuiz(true); setCurrentQ(0); setUserAnswers([]); setQuizResult(null); setTimer(15); } catch (err) { alert("Error loading test."); } finally { setLoading(false); } };
     const handleAnswer = (optionIndex: number) => { const newAns = [...userAnswers, { id: questions[currentQ].id, selected: optionIndex }]; setUserAnswers(newAns); if (currentQ < questions.length - 1) { setCurrentQ(currentQ + 1); setTimer(15); } else { submitQuiz(newAns); } };
     useEffect(() => { if (!showQuiz || quizResult) return; if (timer > 0) { const t = setTimeout(() => setTimer(timer - 1), 1000); return () => clearTimeout(t); } else { handleAnswer(-1); } }, [timer, showQuiz, quizResult]);
     const submitQuiz = async (answers: any[]) => { try { const res = await api.post(`/skills/submit/${quizSkill}`, answers); setQuizResult(res.data); if (res.data.passed) setSkills([...skills, { name: quizSkill, level: res.data.level }]); } catch (err) { alert("Submission failed"); setShowQuiz(false); } };
 
-    if (loading) return <div className="h-screen bg-black text-white flex items-center justify-center"><Loader2 className="animate-spin" /></div>;
+    if (loading) return <div className="h-screen bg-gray-950 flex items-center justify-center"><Loader2 className="animate-spin text-purple-500" /></div>;
 
     const totalTrust = trustBreakdown ? (
         (Number(trustBreakdown.base) || 0) + 
@@ -157,314 +201,581 @@ export default function ProfileClient() {
 
     return (
         <div className="min-h-screen w-full bg-transparent text-zinc-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
-                  
-            <div className="fixed inset-0 z-0 pointer-events-none">
-                <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-900/20 blur-[100px] rounded-full" />
-                <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-blue-900/20 blur-[100px] rounded-full" />
-            </div>
-
-            <div className="relative z-10 max-w-[90rem] mx-auto p-4 md:p-8">
-                
-                {/* --- HEADER --- */}
-                <motion.div initial={{ opacity: 0, y: -20 }} animate={{ opacity: 1, y: 0 }} className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
+            
+            <main className="max-w-7xl mx-auto px-4 py-8">
+                {/* TOP BAR */}
+                <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
                     <div className="flex items-center gap-4">
-                        <Link href="/dashboard" className="p-3 bg-zinc-800/50 hover:bg-zinc-700 rounded-2xl border border-white/5 transition-all">
-                            <ArrowLeft className="w-5 h-5 text-zinc-400 hover:text-white" />
+                        <Link href="/dashboard" className="p-3 bg-white/5 hover:bg-white/10 rounded-2xl border border-white/10 transition-all">
+                            <ArrowLeft className="w-5 h-5" />
                         </Link>
                         <div>
-                            <h1 className="text-3xl font-black tracking-tight text-white">Edit Profile</h1>
-                            <p className="text-zinc-500 text-sm">Manage your public presence and trust signals.</p>
+                            <h1 className="text-3xl font-bold tracking-tight">Profile Settings</h1>
+                            <p className="text-gray-500 text-sm">Manage your professional presence and availability.</p>
                         </div>
                     </div>
 
                     <div className="flex items-center gap-3 w-full md:w-auto">
-                        <button onClick={() => setIsLookingForTeam(!isLookingForTeam)} className={`flex-1 md:flex-none px-5 py-3 rounded-xl font-bold flex items-center justify-center gap-2 text-sm transition-all border ${isLookingForTeam ? 'bg-green-500/10 border-green-500/30 text-green-400' : 'bg-zinc-900 border-zinc-800 text-zinc-500'}`}>
+                        <button 
+                            onClick={() => setIsLookingForTeam(!isLookingForTeam)}
+                            className={`flex-1 md:flex-none px-5 py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 text-sm transition-all border ${isLookingForTeam ? 'bg-green-500/10 border-green-500/50 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}
+                        >
                             {isLookingForTeam ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                            {isLookingForTeam ? "Visible to Recruiters" : "Hidden"}
+                            {isLookingForTeam ? "Active in Matching" : "Hidden"}
                         </button>
-                        <button onClick={saveProfile} className="flex-1 md:flex-none bg-white text-black hover:bg-zinc-200 px-8 py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-white/10 transition-all">
-                            <Save className="w-4 h-4" /> Save Changes
+                        <button onClick={saveProfile} className="flex-1 md:flex-none bg-purple-600 hover:bg-purple-500 px-6 py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-purple-500/20 transition-all">
+                            <Save className="w-4 h-4" /> Save
                         </button>
                     </div>
-                </motion.div>
+                </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
                     
-                    {/* LEFT SIDEBAR (Col span 3) */}
-                    <div className="lg:col-span-3 space-y-6">
-                        
-                        {/* Basic Info */}
-                        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-3xl space-y-6">
-                            <h3 className="text-lg font-bold flex items-center gap-2 text-zinc-100"><User className="w-5 h-5 text-purple-400"/> Identity</h3>
+                    {/* LEFT COLUMN: IDENTITY & VERIFICATIONS */}
+                    <div className="lg:col-span-4 space-y-8">
+                        <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] shadow-xl">
+                            <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-purple-400"><User className="w-5 h-5" /> Identity</h3>
                             
-                            <div className="space-y-4">
+                            <div className="flex flex-col items-center mb-6">
+                                <div className="relative group cursor-pointer" onClick={editAvatar}>
+                                    <img 
+                                        src={avatarUrl || "https://github.com/shadcn.png"} 
+                                        alt="Avatar" 
+                                        className="w-24 h-24 rounded-full border-4 border-gray-800 object-cover group-hover:opacity-50 transition-opacity" 
+                                    />
+                                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Edit2 className="w-6 h-6 text-white" />
+                                    </div>
+                                    <div className="absolute bottom-0 right-0 bg-purple-600 p-1.5 rounded-full border-2 border-black">
+                                        <Camera className="w-3 h-3 text-white" />
+                                    </div>
+                                </div>
+                                <p className="text-[10px] text-gray-500 mt-2">Tap to edit avatar</p>
+                            </div>
+
+                            <div className="space-y-5">
+                                {/* FULL NAME (EDITABLE) */}
                                 <div>
-                                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 block">Age</label>
-                                    <select className="w-full bg-black/50 border border-zinc-800 rounded-xl p-3 text-sm focus:border-purple-500 transition-all outline-none text-zinc-300" value={age} onChange={e => setAge(e.target.value)}>
+                                    <div className="flex justify-between items-center mb-2">
+                                        <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Full Name</label>
+                                        <button onClick={() => toggleVisibility('full_name')} className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.full_name ? "text-green-400" : "text-gray-600 hover:text-gray-400"}`}>
+                                            {visibility.full_name ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
+                                        </button>
+                                    </div>
+                                    <input 
+                                        className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm focus:border-purple-500 transition-all outline-none" 
+                                        value={fullName} 
+                                        onChange={e => setFullName(e.target.value)} 
+                                        placeholder="Your Full Name" 
+                                    />
+                                </div>
+
+                                {/* USERNAME (READ ONLY) */}
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Username</label>
+                                    <div className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-gray-400 flex items-center gap-3 cursor-not-allowed">
+                                        <Lock className="w-3 h-3 opacity-50" />
+                                        <span className="flex-1 font-mono">@{username}</span>
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Current Age</label>
+                                    <select className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm focus:border-purple-500 transition-all outline-none" value={age} onChange={e => setAge(e.target.value)}>
                                         <option value="">Select Age</option>
                                         {AGES.map(a => <option key={a} value={a}>{a}</option>)}
                                     </select>
                                 </div>
-
+                                
+                                {/* EMAIL SECTION */}
                                 <div>
                                     <div className="flex justify-between items-center mb-2">
-                                        <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Email</label>
-                                        <button onClick={() => toggleVisibility('email')} className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.email ? "text-green-400" : "text-zinc-600 hover:text-zinc-400"}`}>
+                                        <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold">Email Address</label>
+                                        <button onClick={() => toggleVisibility('email')} className={`flex items-center gap-1 text-[10px] uppercase font-bold transition-colors ${visibility.email ? "text-green-400" : "text-gray-600 hover:text-gray-400"}`}>
                                             {visibility.email ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
                                         </button>
                                     </div>
-                                    <div className="w-full bg-black/50 border border-zinc-800 rounded-xl p-3 text-sm text-zinc-400 flex items-center gap-3 cursor-not-allowed">
+                                    <div className="w-full bg-black/50 border border-white/10 rounded-xl p-3 text-sm text-gray-400 flex items-center gap-3 cursor-not-allowed">
                                         <Mail className="w-4 h-4 opacity-50" />
-                                        <span className="flex-1 font-mono truncate">{email}</span>
+                                        <span className="flex-1 font-mono">{email}</span>
                                     </div>
                                 </div>
 
                                 <div>
-                                    <label className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold mb-2 block">Bio</label>
-                                    <textarea className="w-full bg-black/50 border border-zinc-800 rounded-xl p-3 h-32 text-sm focus:border-purple-500 transition-all outline-none resize-none text-zinc-300 placeholder:text-zinc-700" value={about} onChange={e => setAbout(e.target.value)} placeholder="Write a short bio..." />
+                                    <label className="text-[10px] uppercase tracking-widest text-gray-500 font-bold mb-2 block">Mini Bio</label>
+                                    <textarea className="w-full bg-black border border-white/10 rounded-xl p-3 h-32 text-sm focus:border-purple-500 transition-all outline-none resize-none" value={about} onChange={e => setAbout(e.target.value)} placeholder="Tell the community about yourself..." />
                                 </div>
                             </div>
-                        </motion.div>
-
-                        {/* Trust Score */}
-                        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-3xl">
-                            <div className="flex justify-between items-center mb-4">
-                                <h3 className="text-lg font-bold flex items-center gap-2 text-zinc-100"><ShieldCheck className="w-5 h-5 text-green-400"/> Trust Score</h3>
-                                <div className="text-2xl font-black text-white">{Math.min(7.0, totalTrust).toFixed(1)}<span className="text-zinc-600 text-sm font-medium">/7</span></div>
-                            </div>
-                            <div className="space-y-2">
-                                <div className="flex justify-between items-center p-2.5 bg-black/40 rounded-xl border border-white/5">
-                                    <span className="text-zinc-400 text-xs font-bold">Base</span>
-                                    <span className="text-green-400 font-bold text-xs">{trustBreakdown?.base?.toFixed(1) || "5.0"}</span>
+                        </div>
+                        
+                        {/* TRUST SCORE BREAKDOWN */}
+                        {trustBreakdown && (
+                            <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
+                                <div className="flex justify-between items-center mb-4">
+                                    <h3 className="text-lg font-bold flex items-center gap-2 text-green-400">
+                                        <ShieldCheck className="w-5 h-5" /> Trust Analysis
+                                    </h3>
+                                    <span className="text-2xl font-black text-white">{Math.min(7.0, totalTrust).toFixed(1)}<span className="text-gray-500 text-sm">/7</span></span>
                                 </div>
-                                {trustBreakdown?.details?.map((detail: string, i: number) => {
-                                    const [platform, info] = detail.split(":");
-                                    return (
-                                        <div key={i} className="flex justify-between items-center p-2.5 bg-black/40 rounded-xl border border-white/5">
-                                            <span className="text-zinc-400 text-xs font-bold">{platform}</span>
-                                            <span className="text-zinc-200 text-[10px] font-mono">{info}</span>
+                                
+                                <div className="space-y-3">
+                                    <div className="flex justify-between items-center bg-black p-3 rounded-xl border border-white/10">
+                                        <span className="text-gray-400 text-sm font-bold">Base Score</span>
+                                        <span className="text-green-400 font-bold">{trustBreakdown.base?.toFixed(1) || "5.0"}</span>
+                                    </div>
+                                    
+                                    <div className="bg-black p-3 rounded-xl border border-white/10">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-gray-300 text-sm font-bold flex items-center gap-2"><Github className="w-3 h-3"/> GitHub</span>
+                                            <span className="text-green-400 text-xs font-mono">+{Number(trustBreakdown.github || 0).toFixed(1)}</span>
                                         </div>
-                                    );
-                                })}
-                            </div>
-                        </motion.div>
-
-                        {/* Connections */}
-                        <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 }} className="bg-gradient-to-br from-zinc-900 to-black border border-white/10 p-6 rounded-3xl">
-                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-yellow-500"><Zap className="w-5 h-5"/> Connections</h3>
-                            <div className="space-y-3">
-                                {[
-                                    { id: 'codeforces', icon: Code2, label: 'Codeforces' },
-                                    { id: 'leetcode', icon: Code2, label: 'LeetCode' },
-                                    { id: 'linkedin', icon: Linkedin, label: 'LinkedIn' }
-                                ].map((platform) => (
-                                    <div key={platform.id} className="flex items-center justify-between p-2.5 bg-white/5 rounded-xl border border-white/5 hover:border-white/10 transition">
-                                        <div className="flex items-center gap-3 text-sm font-bold text-zinc-300">
-                                            <platform.icon className="w-4 h-4 text-zinc-500" /> {platform.label}
-                                        </div>
-                                        {connectedAccounts[platform.id] ? (
-                                            <button onClick={() => toggleVisibility(platform.id)} className="text-zinc-500 hover:text-white transition">
-                                                {visibility[platform.id] ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
-                                            </button>
+                                        {trustBreakdown.details && trustBreakdown.details.some((d: string) => d.includes("GitHub")) ? (
+                                            <div className="space-y-1 pl-5 border-l border-white/10">
+                                                {trustBreakdown.details.filter((d:string) => d.includes("GitHub")).map((d:string, i:number) => (
+                                                    <p key={i} className="text-[10px] text-gray-500">{d.replace("GitHub: ", "")}</p>
+                                                ))}
+                                            </div>
                                         ) : (
-                                            <button onClick={() => connectPlatform(platform.id)} className="text-[10px] bg-white text-black px-3 py-1.5 rounded-lg font-bold hover:bg-zinc-200">Connect</button>
+                                            <div className="pl-5 text-[10px] text-gray-500 italic">No GitHub stats available</div>
                                         )}
                                     </div>
-                                ))}
+
+                                    {trustBreakdown.details?.filter((d:string) => !d.includes("GitHub")).map((detail: string, i: number) => {
+                                        const parts = detail.split(":");
+                                        const platform = parts[0];
+                                        const info = parts[1] || "";
+                                        return (
+                                            <div key={i} className="flex justify-between items-center bg-black p-3 rounded-xl border border-white/10">
+                                                <span className="text-gray-300 text-sm">{platform}</span>
+                                                <span className="text-green-400 text-[10px] font-mono">{info}</span>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
                             </div>
-                        </motion.div>
+                        )}
+
+                        <div className="bg-gradient-to-br from-[#1a1a1a] to-black border border-yellow-500/20 p-6 rounded-[2rem]">
+                            <h3 className="text-lg font-bold text-yellow-500 mb-6 flex items-center gap-2">
+                                <Zap className="w-5 h-5" /> Connected Accounts
+                            </h3>
+                            <div className="space-y-4">
+                                {/* GitHub */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4 flex justify-between items-center">
+                                    <div className="flex items-center gap-3">
+                                        <Github className="w-5 h-5 text-gray-400"/>
+                                        <span className="font-bold text-sm">GitHub</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {connectedAccounts.github ? (
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-xs text-gray-500 font-mono">@{connectedAccounts.github}</span>
+                                                <CheckCircle className="w-4 h-4 text-green-500"/>
+                                            </div>
+                                        ) : (
+                                            <button onClick={() => connectPlatform('github')} className="text-xs bg-white/10 px-3 py-1.5 rounded-full text-white hover:bg-white/20 transition flex items-center gap-1">
+                                                <Plus className="w-3 h-3" /> Connect
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                {/* Codeforces */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center gap-3">
+                                            <Code className="w-5 h-5 text-gray-400"/>
+                                            <span className="font-bold text-sm">Codeforces</span>
+                                        </div>
+                                        {connectedAccounts.codeforces ? (
+                                            <button onClick={() => toggleVisibility('codeforces')} className="text-gray-500 hover:text-white">
+                                                {visibility.codeforces ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
+                                            </button>
+                                        ) : (
+                                            <button onClick={() => connectPlatform('codeforces')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>
+                                        )}
+                                    </div>
+                                    {connectedAccounts.codeforces && platformStats.codeforces && (
+                                        <div className="grid grid-cols-2 gap-2 mt-3">
+                                            <div className="bg-white/5 p-2 rounded-lg text-center">
+                                                <div className="text-[10px] text-gray-500 uppercase">Rating</div>
+                                                <div className="text-lg font-black text-yellow-500">{platformStats.codeforces.rating}</div>
+                                            </div>
+                                            <div className="bg-white/5 p-2 rounded-lg text-center">
+                                                <div className="text-[10px] text-gray-500 uppercase">Rank</div>
+                                                <div className="text-sm font-bold text-white">{platformStats.codeforces.rank}</div>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+
+                                {/* LeetCode */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center gap-3">
+                                            <Code2 className="w-5 h-5 text-gray-400"/>
+                                            <span className="font-bold text-sm">LeetCode</span>
+                                        </div>
+                                        {connectedAccounts.leetcode ? (
+                                            <button onClick={() => toggleVisibility('leetcode')} className="text-gray-500 hover:text-white">
+                                                {visibility.leetcode ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
+                                            </button>
+                                        ) : (
+                                            <button onClick={() => connectPlatform('leetcode')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>
+                                        )}
+                                    </div>
+                                    {connectedAccounts.leetcode && platformStats.leetcode && (
+                                        <div className="mt-3 bg-white/5 p-2 rounded-lg text-center">
+                                            <div className="text-[10px] text-gray-500 uppercase">Problems Solved</div>
+                                            <div className="text-lg font-black text-orange-500">{platformStats.leetcode.total_solved}</div>
+                                        </div>
+                                    )}
+                                </div>
+                                
+                                {/* LinkedIn */}
+                                <div className="bg-black border border-white/5 rounded-2xl p-4 flex justify-between items-center">
+                                    <div className="flex items-center gap-3">
+                                        <Linkedin className="w-5 h-5 text-gray-400"/>
+                                        <span className="font-bold text-sm">LinkedIn</span>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {connectedAccounts.linkedin ? <CheckCircle className="w-4 h-4 text-green-500"/> : <button onClick={() => connectPlatform('linkedin')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>}
+                                        {connectedAccounts.linkedin && (
+                                            <button onClick={() => toggleVisibility('linkedin')} className="text-gray-500 hover:text-white ml-2">
+                                                {visibility.linkedin ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>}
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
-                    {/* MAIN CONTENT (Col span 9) */}
-                    <div className="lg:col-span-9 space-y-8">
+                    {/* RIGHT COLUMN: EXPERTISE, EDUCATION, SOCIALS, ACHIEVEMENTS */}
+                    <div className="lg:col-span-8 space-y-8">
                         
-                        {/* --- PROFESSIONAL SECTION (Grid) --- */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* ACADEMIC QUALIFICATIONS */}
+                        <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
+                            <div className="flex justify-between items-center mb-6">
+                                <h3 className="text-lg font-bold flex items-center gap-2 text-purple-400">
+                                    <GraduationCap className="w-5 h-5" /> Academic Qualifications
+                                </h3>
+                                <button onClick={() => setEducationList([...educationList, { institute: "", course: "", year_of_study: "", is_completed: false, is_visible: true }])} className="p-2 bg-white/5 hover:bg-white/10 rounded-xl transition">
+                                    <Plus className="w-4 h-4" />
+                                </button>
+                            </div>
                             
-                            {/* Education Section */}
-                            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-[2rem] flex flex-col">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-lg font-bold flex items-center gap-2 text-zinc-100"><GraduationCap className="w-5 h-5 text-purple-400"/> Education</h3>
-                                    <button onClick={() => setEducationList([...educationList, { institute: "", course: "", year_of_study: "", is_completed: false, is_visible: true }])} className="p-2 bg-white/10 hover:bg-white/20 rounded-xl transition text-white">
-                                        <Plus className="w-4 h-4" />
-                                    </button>
-                                </div>
-                                <div className="space-y-4 flex-1">
-                                    {educationList.map((edu, index) => (
-                                        <div key={index} className="p-4 bg-black/40 border border-white/5 rounded-2xl relative group hover:border-white/10 transition">
-                                            <button onClick={() => setEducationList(educationList.filter((_, i) => i !== index))} className="absolute top-2 right-2 text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><X className="w-3 h-3" /></button>
-                                            <div className="grid grid-cols-1 gap-2 mb-2">
-                                                <input placeholder="Institute Name" value={edu.institute} onChange={(e) => { const n = [...educationList]; n[index].institute = e.target.value; setEducationList(n); }} className="bg-transparent border-b border-zinc-800 py-1 text-sm outline-none focus:border-purple-500 text-white placeholder:text-zinc-700 transition-colors" />
-                                                <input placeholder="Course" value={edu.course} onChange={(e) => { const n = [...educationList]; n[index].course = e.target.value; setEducationList(n); }} className="bg-transparent border-b border-zinc-800 py-1 text-sm outline-none focus:border-purple-500 text-white placeholder:text-zinc-700 transition-colors" />
-                                            </div>
-                                            <div className="flex items-center gap-3 mt-2">
-                                                <label className="flex items-center gap-2 cursor-pointer text-[10px] text-zinc-400 hover:text-white transition">
-                                                    <input type="checkbox" checked={edu.is_completed} onChange={(e) => { const n = [...educationList]; n[index].is_completed = e.target.checked; setEducationList(n); }} className="accent-purple-500" /> Completed
-                                                </label>
-                                                {!edu.is_completed && <input placeholder="Year" value={edu.year_of_study || ""} onChange={(e) => { const n = [...educationList]; n[index].year_of_study = e.target.value; setEducationList(n); }} className="bg-zinc-900 border border-zinc-800 rounded-md p-1 w-16 text-center text-[10px] outline-none text-white focus:border-purple-500" />}
-                                                <button onClick={() => { const n = [...educationList]; n[index].is_visible = !n[index].is_visible; setEducationList(n); }} className="ml-auto text-zinc-500 hover:text-white transition">
-                                                    {edu.is_visible ? <Eye className="w-3 h-3 text-green-400" /> : <EyeOff className="w-3 h-3" />}
-                                                </button>
-                                            </div>
-                                        </div>
-                                    ))}
-                                    {educationList.length === 0 && <div className="text-center py-8 text-zinc-600 italic text-sm">Add education details.</div>}
-                                </div>
-                            </motion.div>
+                            <div className="space-y-4">
+                                {educationList.map((edu, index) => (
+                                    <div key={index} className="p-4 bg-black border border-white/10 rounded-xl relative group">
+                                        <button onClick={() => setEducationList(educationList.filter((_, i) => i !== index))} className="absolute top-2 right-2 text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all">
+                                            <X className="w-4 h-4" />
+                                        </button>
 
-                            {/* Expertise Section */}
-                            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-[2rem] flex flex-col">
-                                <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-lg font-bold flex items-center gap-2 text-zinc-100"><Code2 className="w-5 h-5 text-blue-400"/> Expertise</h3>
-                                    <select className="bg-blue-600 hover:bg-blue-500 text-white font-bold px-3 py-1.5 rounded-lg text-[10px] transition-all cursor-pointer outline-none shadow-lg shadow-blue-900/20 appearance-none" value={dropdownValue} onChange={e => { startSkillTest(e.target.value); setDropdownValue(""); }}>
-                                        <option value="" disabled>+ Add Skill</option>
-                                        {PRESET_SKILLS.filter(s => !skills.find(sk => sk.name === s)).map(s => <option key={s} value={s}>{s}</option>)}
-                                    </select>
-                                </div>
-                                <div className="flex flex-wrap gap-2 flex-1 content-start">
-                                    {skills.map(s => (
-                                        <div key={s.name} className="flex items-center gap-2 bg-black/40 border border-white/10 pl-3 pr-2 py-1.5 rounded-xl">
-                                            <span className="text-xs font-medium text-white">{s.name}</span>
-                                            <span className="text-[9px] bg-blue-500/10 text-blue-400 px-1.5 py-0.5 rounded-md font-bold uppercase">{s.level}</span>
-                                            <button onClick={() => removeSkill(s.name)} className="p-0.5 text-zinc-600 hover:text-red-500 transition"><X className="w-3 h-3"/></button>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2">
+                                            <input placeholder="Institute Name" value={edu.institute} onChange={(e) => { const n = [...educationList]; n[index].institute = e.target.value; setEducationList(n); }} className="bg-white/5 border border-white/10 rounded-lg p-2 text-sm outline-none focus:border-purple-500 transition-colors" />
+                                            <input placeholder="Course (e.g. B.Tech)" value={edu.course} onChange={(e) => { const n = [...educationList]; n[index].course = e.target.value; setEducationList(n); }} className="bg-white/5 border border-white/10 rounded-lg p-2 text-sm outline-none focus:border-purple-500 transition-colors" />
                                         </div>
-                                    ))}
-                                    {skills.length === 0 && <div className="w-full text-center py-8 text-zinc-600 text-sm">Verify skills to boost your score.</div>}
-                                </div>
-                            </motion.div>
+
+                                        <div className="flex flex-wrap items-center gap-4 text-xs text-gray-400">
+                                            <label className="flex items-center gap-2 cursor-pointer bg-white/5 px-3 py-1.5 rounded-lg hover:bg-white/10 transition">
+                                                <input type="checkbox" checked={edu.is_completed} onChange={(e) => { const n = [...educationList]; n[index].is_completed = e.target.checked; setEducationList(n); }} />
+                                                Completed?
+                                            </label>
+
+                                            {!edu.is_completed && (
+                                                <input placeholder="Year (e.g. 3rd)" value={edu.year_of_study || ""} onChange={(e) => { const n = [...educationList]; n[index].year_of_study = e.target.value; setEducationList(n); }} className="bg-white/5 border border-white/10 rounded-lg p-1.5 w-24 text-center outline-none" />
+                                            )}
+
+                                            <label className="flex items-center gap-2 cursor-pointer ml-auto text-gray-500 hover:text-white transition">
+                                                <input type="checkbox" checked={edu.is_visible} onChange={(e) => { const n = [...educationList]; n[index].is_visible = e.target.checked; setEducationList(n); }} className="hidden" />
+                                                {edu.is_visible ? <Eye className="w-3 h-3 text-green-400" /> : <EyeOff className="w-3 h-3" />}
+                                                {edu.is_visible ? "Visible" : "Hidden"}
+                                            </label>
+                                        </div>
+                                    </div>
+                                ))}
+                                {educationList.length === 0 && <div className="text-center text-gray-600 text-sm py-4">Add your education details to find better peers.</div>}
+                            </div>
                         </div>
 
-                        {/* --- SOCIAL & IMPACT SECTION (Grid) --- */}
+                        {/* EXPERTISE SECTION */}
+                        <div className="relative overflow-hidden bg-[#0a0a0a] border border-white/10 p-8 rounded-[2rem] shadow-2xl shadow-black/50">
+  {/* Subtle Background Glow effect */}
+  <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+
+  {/* Header Section */}
+  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 relative z-10">
+    <div>
+      <h3 className="text-xl font-bold flex items-center gap-3 text-white">
+        <div className="p-2 bg-blue-500/10 rounded-lg">
+          <Code2 className="w-5 h-5 text-blue-400" />
+        </div>
+        Technical Expertise
+      </h3>
+      <p className="text-xs text-gray-500 mt-1 ml-1">Verify your skills to boost your trust score.</p>
+    </div>
+
+    {/* Custom Styled Select Button */}
+    <div className="relative group">
+      <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+        <Plus className="w-4 h-4 text-blue-400 group-hover:text-white transition-colors" />
+      </div>
+      <select 
+        className="appearance-none bg-[#111] hover:bg-blue-600/10 border border-white/10 hover:border-blue-500/50 text-gray-300 hover:text-white font-medium pl-9 pr-6 py-2.5 rounded-xl text-xs transition-all cursor-pointer outline-none focus:ring-2 focus:ring-blue-500/50"
+        value={dropdownValue} 
+        onChange={e => { startSkillTest(e.target.value); setDropdownValue(""); }}
+      >
+        <option value="" disabled>Add New Skill</option>
+        {PRESET_SKILLS.filter(s => !skills.find(sk => sk.name === s)).map(s => (
+          <option key={s} value={s} className="bg-[#111] text-gray-300">
+            {s}
+          </option>
+        ))}
+      </select>
+    </div>
+  </div>
+
+  {/* Skills Grid */}
+  <div className="flex flex-wrap gap-3 relative z-10">
+    {skills.length > 0 ? (
+      skills.map(s => (
+        <div 
+          key={s.name} 
+          className="group flex items-center gap-3 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-blue-500/30 pl-4 pr-3 py-2.5 rounded-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-500/10"
+        >
+          {/* Skill Name */}
+          <span className="text-sm font-medium text-gray-200 group-hover:text-white">
+            {s.name}
+          </span>
+          
+          {/* Level Badge */}
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-black/40 border border-white/5">
+            <div className={`w-1.5 h-1.5 rounded-full ${
+              s.level === 'Expert' ? 'bg-purple-400' : 
+              s.level === 'Advanced' ? 'bg-blue-400' : 'bg-emerald-400'
+            }`} />
+            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+              {s.level}
+            </span>
+          </div>
+
+          {/* Delete Button (Reveals on Hover) */}
+          <button 
+            onClick={() => removeSkill(s.name)} 
+            className="opacity-0 group-hover:opacity-100 -ml-2 group-hover:ml-0 w-0 group-hover:w-auto p-1 text-gray-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all duration-200"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      ))
+    ) : (
+      /* Empty State */
+      <div className="w-full flex flex-col items-center justify-center py-12 border-2 border-dashed border-white/5 rounded-2xl bg-white/[0.02]">
+        <div className="p-3 bg-white/5 rounded-full mb-3">
+            <Sparkles className="w-5 h-5 text-gray-600" />
+        </div>
+        <p className="text-gray-500 text-sm font-medium">No skills verified yet</p>
+        <p className="text-gray-700 text-xs mt-1">Take a skill test to showcase your expertise</p>
+      </div>
+    )}
+  </div>
+</div>
+                        {/* SOCIAL PRESENCE */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            
-                            {/* Social Links */}
-                            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-[2rem]">
-                                <h3 className="text-lg font-bold flex items-center gap-2 mb-6 text-zinc-100"><Globe className="w-5 h-5 text-pink-400"/> Socials</h3>
-                                <div className="space-y-3 mb-6 max-h-60 overflow-y-auto custom-scrollbar">
-                                    {socialLinks.map((l, i) => (
-                                        <div key={i} className="flex items-center justify-between bg-black/40 border border-white/5 p-3 rounded-xl group hover:border-white/10 transition">
+                            <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] flex flex-col">
+                                <h3 className="font-bold mb-6 text-pink-400 flex items-center gap-2"><Heart className="w-5 h-5" /> Social Presence</h3>
+                                <div className="space-y-2 flex-1 overflow-y-auto max-h-60 mb-6 pr-1 custom-scrollbar">
+                                    {socialLinks.length > 0 ? socialLinks.map((l, i) => (
+                                        <div key={i} className="flex items-center justify-between bg-black border border-white/5 p-3 rounded-xl group transition-all hover:bg-white/5">
                                             <div className="flex items-center gap-3 overflow-hidden">
-                                                <div className="p-2 bg-white/5 rounded-lg text-zinc-400">
-                                                    {l.platform.toLowerCase() === 'twitter' ? <Twitter className="w-3.5 h-3.5"/> : l.platform.toLowerCase() === 'github' ? <Github className="w-3.5 h-3.5"/> : <Globe className="w-3.5 h-3.5"/>}
+                                                <div className="p-2 bg-white/5 rounded-lg text-gray-400">
+                                                    {l.platform.toLowerCase() === 'twitter' ? <Twitter className="w-3.5 h-3.5" /> : 
+                                                     l.platform.toLowerCase() === 'github' ? <Github className="w-3.5 h-3.5" /> : 
+                                                     l.platform.toLowerCase() === 'instagram' ? <Instagram className="w-3.5 h-3.5" /> : 
+                                                     <Globe className="w-3.5 h-3.5" />}
                                                 </div>
                                                 <div className="flex flex-col overflow-hidden">
-                                                    <span className="text-[10px] font-bold text-zinc-500 uppercase">{l.platform}</span>
-                                                    <span className="text-xs text-blue-400 truncate max-w-[150px]">{l.url}</span>
+                                                    <span className="text-[10px] font-bold text-gray-500 uppercase">{l.platform}</span>
+                                                    <span className="text-xs text-blue-400 truncate">{l.url}</span>
                                                 </div>
                                             </div>
-                                            <button onClick={() => setSocialLinks(socialLinks.filter((_, idx) => idx !== i))} className="text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"><Trash2 className="w-3.5 h-3.5"/></button>
+                                            <button onClick={() => setSocialLinks(socialLinks.filter((_, idx) => idx !== i))} className="p-2 text-gray-600 hover:text-red-500 md:opacity-0 group-hover:opacity-100 transition-all">
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
                                         </div>
-                                    ))}
+                                    )) : (
+                                        <div className="flex flex-col items-center justify-center py-8 opacity-20">
+                                            <Globe className="w-8 h-8 mb-2" />
+                                            <p className="text-xs">No links added</p>
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="grid grid-cols-1 gap-2">
-                                    <div className="flex gap-2">
-                                        <input className="w-1/3 bg-black/50 border border-zinc-800 rounded-lg p-2 text-xs text-white outline-none focus:border-pink-500 transition placeholder:text-zinc-700" placeholder="Platform" value={newLinkPlatform} onChange={e => setNewLinkPlatform(e.target.value)} />
-                                        <input className="flex-1 bg-black/50 border border-zinc-800 rounded-lg p-2 text-xs text-white outline-none focus:border-pink-500 transition placeholder:text-zinc-700" placeholder="URL" value={newLinkUrl} onChange={e => setNewLinkUrl(e.target.value)} />
+                                <div className="mt-auto space-y-3 pt-4 border-t border-white/5">
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <input className="bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-pink-500/50 transition-all" placeholder="Platform" value={newLinkPlatform} onChange={e => setNewLinkPlatform(e.target.value)} />
+                                        <input className="bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-pink-500/50 transition-all" placeholder="URL" value={newLinkUrl} onChange={e => setNewLinkUrl(e.target.value)} />
                                     </div>
-                                    <button onClick={addSocialLink} className="w-full py-2 bg-white/5 hover:bg-white/10 text-white rounded-lg font-bold text-xs transition flex items-center justify-center gap-2"><Plus className="w-3 h-3"/> Add Link</button>
+                                    <button onClick={addSocialLink} className="w-full py-3 bg-white text-black rounded-xl font-bold text-xs flex items-center justify-center gap-2 hover:bg-gray-200 transition-all">
+                                        <Plus className="w-4 h-4" /> Add Social Link
+                                    </button>
                                 </div>
-                            </motion.div>
+                            </div>
 
-                            {/* Achievements */}
-                            <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-[2rem]">
+                            {/* ACHIEVEMENTS */}
+                            <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] flex flex-col">
                                 <div className="flex justify-between items-center mb-6">
-                                    <h3 className="text-lg font-bold flex items-center gap-2 text-zinc-100"><Award className="w-5 h-5 text-orange-400"/> Achievements</h3>
-                                    <button onClick={() => toggleVisibility('achievements')} className="text-zinc-500 hover:text-white transition">
+                                    <h3 className="font-bold text-orange-400 flex items-center gap-2"><Award className="w-5 h-5" /> Achievements</h3>
+                                    <button onClick={() => toggleVisibility('achievements')} className="text-gray-500 hover:text-white">
                                         {visibility.achievements ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                                     </button>
                                 </div>
-                                <div className="space-y-3 mb-6 max-h-60 overflow-y-auto custom-scrollbar">
-                                    {achievements.map((a, i) => (
-                                        <div key={i} className="bg-black/40 border border-white/5 p-3 rounded-xl group relative hover:bg-white/5 transition">
+                                <div className="space-y-2 flex-1 overflow-y-auto max-h-60 mb-6 pr-1 custom-scrollbar">
+                                    {achievements.length > 0 ? achievements.map((a, i) => (
+                                        <div key={i} className="bg-black border border-white/5 p-3 rounded-xl group relative hover:bg-white/5 transition-all">
                                             <h4 className="text-xs font-bold text-white pr-6">{a.title}</h4>
-                                            <p className="text-[10px] text-zinc-500 line-clamp-1 mt-1">{a.description}</p>
-                                            <button onClick={() => setAchievements(achievements.filter((_, idx) => idx !== i))} className="absolute top-3 right-3 text-zinc-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition"><X className="w-3.5 h-3.5"/></button>
+                                            <p className="text-[10px] text-gray-500 line-clamp-2 mt-1">{a.description}</p>
+                                            <button onClick={() => setAchievements(achievements.filter((_, idx) => idx !== i))} className="absolute top-3 right-3 p-1 md:opacity-0 group-hover:opacity-100 text-red-500 transition-all">
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
                                         </div>
-                                    ))}
-                                    {achievements.length === 0 && <div className="text-center py-8 text-zinc-600 italic text-sm">No achievements added yet.</div>}
+                                    )) : (
+                                        <div className="flex flex-col items-center justify-center py-8 opacity-20">
+                                            <Award className="w-8 h-8 mb-2" />
+                                            <p className="text-xs">Brag about your wins</p>
+                                        </div>
+                                    )}
                                 </div>
-                                <div className="space-y-2">
-                                    <input className="w-full bg-black/50 border border-zinc-800 rounded-lg p-2 text-xs text-white outline-none focus:border-orange-500 transition placeholder:text-zinc-700" placeholder="Title" value={achTitle} onChange={e => setAchTitle(e.target.value)} />
+                                <div className="mt-auto space-y-2 pt-4 border-t border-white/5">
+                                    <input className="w-full bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-orange-500/50 transition-all" placeholder="Achievement Title" value={achTitle} onChange={e => setAchTitle(e.target.value)} />
                                     <div className="flex gap-2">
-                                        <input className="flex-1 bg-black/50 border border-zinc-800 rounded-lg p-2 text-xs text-white outline-none focus:border-orange-500 transition placeholder:text-zinc-700" placeholder="Description" value={achDesc} onChange={e => setAchDesc(e.target.value)} />
-                                        <button onClick={addAchievement} className="p-2 bg-orange-500/20 text-orange-400 hover:bg-orange-500 hover:text-white rounded-lg transition"><Plus className="w-4 h-4"/></button>
+                                        <input className="flex-1 bg-black border border-white/10 rounded-xl p-3 text-xs outline-none focus:border-orange-500/50 transition-all" placeholder="Brief description" value={achDesc} onChange={e => setAchDesc(e.target.value)} />
+                                        <button onClick={addAchievement} className="p-3 bg-orange-500 text-black rounded-xl hover:bg-orange-400 transition-all">
+                                            <Plus className="w-5 h-5" />
+                                        </button>
                                     </div>
                                 </div>
-                            </motion.div>
+                            </div>
                         </div>
 
-                        {/* --- AVAILABILITY (Full Width) --- */}
-                        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-8 rounded-[2.5rem]">
-                            <h3 className="text-lg font-bold flex items-center gap-3 mb-8 text-zinc-100"><Calendar className="w-5 h-5 text-green-400"/> Availability Schedule</h3>
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                        {/* PEER TESTIMONIALS (RESTORED) */}
+                        {ratings.length > 0 && (
+                            <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2.5rem]">
+                                <div className="flex justify-between items-center mb-8">
+                                    <h3 className="text-xl font-bold text-yellow-400 flex items-center gap-3"><Star className="w-6 h-6" /> Peer Testimonials</h3>
+                                    <button onClick={() => toggleVisibility('ratings')} className="text-gray-500 hover:text-white">
+                                        {visibility.ratings ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                                    </button>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    {ratings.map((r, i) => (
+                                        <div key={i} className="bg-black border border-white/10 p-5 rounded-2xl relative overflow-hidden group hover:border-yellow-500/30 transition-all">
+                                            <div className="absolute top-0 right-0 p-3 bg-yellow-500/10 text-yellow-500 text-sm font-black">{r.score}</div>
+                                            <h4 className="font-bold text-white text-sm pr-10">{r.project_name}</h4>
+                                            <p className="text-[10px] text-gray-500 mb-3">by {r.rater_name}</p>
+                                            <p className="text-xs text-gray-400 italic leading-relaxed">"{r.explanation}"</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* AVAILABILITY */}
+                        <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2.5rem]">
+                            <h3 className="text-xl font-bold flex items-center gap-3 mb-8 text-green-400"><Calendar className="w-6 h-6" /> Collaboration Schedule</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {availability.map((dayData, index) => (
-                                    <div key={dayData.day} className={`p-4 rounded-2xl border transition-all ${dayData.enabled ? "bg-black/60 border-green-500/30" : "bg-white/5 border-transparent opacity-40 hover:opacity-60"}`}>
-                                        <div className="flex justify-between items-center mb-3">
-                                            <div className="flex items-center gap-2 cursor-pointer" onClick={() => toggleDay(index)}>
-                                                <div className={`w-4 h-4 rounded border flex items-center justify-center transition ${dayData.enabled ? 'bg-green-500 border-green-500' : 'border-zinc-600'}`}>
-                                                    {dayData.enabled && <CheckCircle className="w-3 h-3 text-black" />}
+                                    <div key={dayData.day} className={`p-5 rounded-2xl border transition-all ${dayData.enabled ? "bg-black border-green-500/30 shadow-lg shadow-green-500/5" : "bg-[#0a0a0a] border-white/5 opacity-40"}`}>
+                                        <div className="flex items-center justify-between mb-4">
+                                            <div className="flex items-center gap-3 cursor-pointer" onClick={() => toggleDay(index)}>
+                                                <div className={`w-5 h-5 rounded-md border flex items-center justify-center transition-all ${dayData.enabled ? 'bg-green-500 border-transparent' : 'border-white/20 bg-transparent'}`}>
+                                                    {dayData.enabled && <Check className="w-3 h-3 text-black stroke-[4px]" />}
                                                 </div>
-                                                <span className="text-xs font-bold text-white">{dayData.day.substring(0, 3)}</span>
+                                                <span className={`text-sm font-bold ${dayData.enabled ? "text-white" : "text-gray-500"}`}>{dayData.day}</span>
                                             </div>
-                                            {dayData.enabled && <button onClick={() => addSlot(index)} className="text-zinc-500 hover:text-white"><Plus className="w-3 h-3"/></button>}
+                                            {dayData.enabled && <button onClick={() => addSlot(index)} className="p-1.5 bg-white/5 rounded-lg hover:bg-white/10 transition-all"><Plus className="w-3 h-3 text-green-400" /></button>}
                                         </div>
                                         {dayData.enabled && dayData.slots.map((slot, sIndex) => (
-                                            <div key={sIndex} className="flex items-center gap-1 mt-1 bg-white/5 p-1.5 rounded-lg">
-                                                <input type="time" value={slot.start} onChange={e => updateSlot(index, sIndex, 'start', e.target.value)} className="bg-transparent text-[10px] text-white outline-none w-10 p-0" />
-                                                <span className="text-zinc-600 text-[10px]">-</span>
-                                                <input type="time" value={slot.end} onChange={e => updateSlot(index, sIndex, 'end', e.target.value)} className="bg-transparent text-[10px] text-white outline-none w-10 p-0" />
-                                                <button onClick={() => removeSlot(index, sIndex)} className="ml-auto text-zinc-600 hover:text-red-500"><X className="w-3 h-3"/></button>
+                                            <div key={sIndex} className="flex items-center gap-2 mt-2 bg-white/5 p-2 rounded-xl">
+                                                <Clock className="w-3 h-3 text-gray-500" />
+                                                <input type="time" value={slot.start} onChange={e => updateSlot(index, sIndex, 'start', e.target.value)} className="bg-transparent text-[10px] text-white outline-none w-14 focus:text-green-400 transition-colors" />
+                                                <span className="text-gray-700">-</span>
+                                                <input type="time" value={slot.end} onChange={e => updateSlot(index, sIndex, 'end', e.target.value)} className="bg-transparent text-[10px] text-white outline-none w-14 focus:text-green-400 transition-colors" />
+                                                <button onClick={() => removeSlot(index, sIndex)} className="ml-auto text-gray-600 hover:text-red-500 p-1"><X className="w-3 h-3" /></button>
                                             </div>
                                         ))}
                                     </div>
                                 ))}
                             </div>
-                        </motion.div>
-
+                        </div>
                     </div>
                 </div>
-            </div>
+            </main>
 
             {/* QUIZ MODAL */}
             <AnimatePresence>
                 {showQuiz && (
-                    <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-[100] p-4">
-                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-zinc-900 border border-zinc-700 p-8 rounded-3xl w-full max-w-lg shadow-2xl relative">
+                    <div className="fixed inset-0 bg-black/95 backdrop-blur-md flex items-center justify-center z-[100] p-4">
+                        <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-[#111] border border-white/10 p-10 rounded-[3rem] w-full max-w-xl text-center relative overflow-hidden">
                             {!quizResult ? (
                                 <>
-                                    <div className="flex justify-between items-center mb-6">
-                                        <div>
-                                            <h2 className="text-2xl font-bold text-white">{quizSkill} Test</h2>
-                                            <p className="text-zinc-500 text-xs">Question {currentQ + 1} of {questions.length}</p>
+                                    <div className="flex justify-between items-center mb-10">
+                                        <div className="text-left">
+                                            <h2 className="text-2xl font-bold text-white">{quizSkill}</h2>
+                                            <p className="text-gray-500 text-xs">Question {currentQ + 1} of {questions.length}</p>
                                         </div>
-                                        <div className="text-xl font-mono font-black text-white bg-white/10 px-3 py-1 rounded-lg">{timer}s</div>
+                                        <div className={`px-4 py-2 rounded-2xl font-mono text-xl font-black ${timer < 5 ? "bg-red-500/20 text-red-500 animate-pulse" : "bg-white/5 text-white"}`}>
+                                            {timer}s
+                                        </div>
                                     </div>
-                                    <div className="w-full bg-zinc-800 h-1 rounded-full mb-8 overflow-hidden">
+                                    <div className="w-full bg-white/5 h-1.5 rounded-full mb-10 overflow-hidden">
                                         <motion.div className="h-full bg-blue-500" initial={{ width: 0 }} animate={{ width: `${((currentQ + 1) / questions.length) * 100}%` }} />
                                     </div>
-                                    <h3 className="text-lg font-medium text-zinc-200 mb-8">{questions[currentQ]?.text}</h3>
-                                    <div className="space-y-3">
+                                    <h3 className="text-xl font-medium leading-relaxed mb-10 min-h-[80px]">{questions[currentQ]?.text}</h3>
+                                    <div className="grid grid-cols-1 gap-4">
                                         {questions[currentQ]?.options.map((opt: string, i: number) => (
-                                            <button key={i} onClick={() => handleAnswer(i)} className="w-full text-left p-4 bg-black/40 hover:bg-blue-600 hover:text-white border border-zinc-800 rounded-xl transition font-medium text-sm text-zinc-300">
-                                                {opt}
+                                            <button key={i} onClick={() => handleAnswer(i)} className="bg-white/5 hover:bg-blue-500 hover:text-black p-5 rounded-[1.5rem] text-left transition-all border border-white/5 hover:border-transparent font-bold">
+                                                <span className="opacity-50 mr-4 font-mono">{String.fromCharCode(65 + i)}</span> {opt}
                                             </button>
                                         ))}
                                     </div>
                                 </>
                             ) : (
-                                <div className="text-center py-8">
-                                    <div className={`mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-6 ${quizResult.passed ? 'bg-green-500 text-black' : 'bg-red-500 text-white'}`}>
-                                        {quizResult.passed ? <CheckCircle className="w-10 h-10"/> : <AlertTriangle className="w-10 h-10"/>}
+                                <div className="py-10">
+                                    <div className="mb-8 flex justify-center">
+                                        {quizResult.passed ? (
+                                            <div className="bg-green-500 text-black p-6 rounded-full"><CheckCircle className="w-16 h-16" /></div>
+                                        ) : (
+                                            <div className="bg-red-500 text-white p-6 rounded-full"><AlertTriangle className="w-16 h-16" /></div>
+                                        )}
                                     </div>
-                                    <h2 className="text-3xl font-black text-white mb-2">{quizResult.passed ? "Verified!" : "Failed"}</h2>
-                                    <p className="text-zinc-400 mb-8">Score: {quizResult.percentage.toFixed(0)}%</p>
-                                    <button onClick={() => setShowQuiz(false)} className="w-full bg-white text-black py-3 rounded-xl font-bold hover:bg-zinc-200 transition">Close</button>
+                                    <h2 className="text-4xl font-black mb-4">{quizResult.passed ? "SUCCESS!" : "FAILED"}</h2>
+                                    <p className="text-gray-400 mb-10 text-lg">Your accuracy: {quizResult.percentage.toFixed(0)}%</p>
+                                    <button onClick={() => setShowQuiz(false)} className="w-full bg-white text-black py-4 rounded-2xl font-black hover:bg-gray-200 transition-all uppercase tracking-widest">
+                                        Continue
+                                    </button>
                                 </div>
                             )}
                         </motion.div>
                     </div>
                 )}
             </AnimatePresence>
+
+            <style jsx global>{`
+                .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+                .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+                .custom-scrollbar::-webkit-scrollbar-thumb { background: #222; border-radius: 10px; }
+                .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #333; }
+            `}</style>
         </div>
     );
+}
+
+export default function ProfilePages() {
+  return (
+    // You can put a loading spinner in the "fallback"
+    <Suspense fallback={<div>Loading chat...</div>}>
+      <ProfilePage />
+    </Suspense>
+  )
 }

@@ -12,8 +12,24 @@ import { toast, Toaster } from "sonner";
 import Link from "next/link";
 import { 
   ArrowLeft, Save, Sparkles, Loader2, X, Plus, Trash2, 
-  AlertTriangle, Crown, Search, LayoutGrid, Users, Zap
+  AlertTriangle, Crown, Search, LayoutGrid, Users, Zap,
+  UserMinus, Check, CheckCircle2
 } from "lucide-react";
+
+// --- INTERFACES ---
+interface Member { id: string; username: string; avatar_url: string; email: string; }
+interface DeletionRequest { is_active: boolean; votes: { [key: string]: string }; }
+interface CompletionRequest { is_active: boolean; votes: { [key: string]: string }; }
+interface MemberRequest { id: string; target_user_id: string; type: "leave" | "remove"; explanation: string; is_active: boolean; votes: { [key: string]: string }; }
+
+interface TeamData {
+    id: string;
+    members: Member[];
+    deletion_request?: DeletionRequest;
+    completion_request?: CompletionRequest;
+    member_requests: MemberRequest[];
+    status: string;
+}
 
 // --- CONSTANTS & SCHEMAS ---
 const PRESET_SKILLS = ["React", "Python", "Node.js", "TypeScript", "Next.js", "Tailwind", "MongoDB", "Firebase", "Flutter", "Java", "C++", "Rust", "Go", "Figma", "UI/UX", "AI/ML", "Docker", "AWS", "Solidity"];
@@ -34,7 +50,13 @@ export default function EditTeamPage() {
   const teamId = params.id as string;
   const [loading, setLoading] = useState(true);
   
-  // Local State - Using 'any[]' temporarily to prevent TS errors if objects slip through
+  // --- VOTING & USER STATE ---
+  const [currentUserId, setCurrentUserId] = useState("");
+  const [teamData, setTeamData] = useState<TeamData | null>(null);
+  const [deletionProcessing, setDeletionProcessing] = useState(false);
+  const [completionProcessing, setCompletionProcessing] = useState(false);
+
+  // --- FORM STATE ---
   const [activeSkills, setActiveSkills] = useState<any[]>([]);
   const [activeSkillInput, setActiveSkillInput] = useState("");
   const [techStack, setTechStack] = useState<any[]>([]);
@@ -66,25 +88,27 @@ export default function EditTeamPage() {
     };
   }, []);
 
-  // 2. Data Fetching Hook (WITH ROBUST FIX)
+  // 2. Data Fetching Hook
   useEffect(() => {
     const token = Cookies.get("token");
     if (!token) return router.push("/");
+
+    // Fetch User ID
+    api.get("/users/me").then(res => setCurrentUserId(res.data._id || res.data.id)).catch(console.error);
 
     const fetchTeam = async () => {
         try {
             const res = await api.get(`/teams/${teamId}`);
             const t = res.data;
 
+            setTeamData(t); // Store full object for voting logic
+
             // --- 🛡️ DEFENSIVE SANITIZATION 🛡️ ---
-            // Forces everything to be a string immediately upon loading.
             const sanitize = (skills: any[]) => {
                 if (!Array.isArray(skills)) return [];
                 return skills.map(s => {
                     if (typeof s === 'string') return s;
-                    // If object contains name (e.g. {name: "React", level: "Expert"}), use name
                     if (typeof s === 'object' && s !== null && s.name) return s.name;
-                    // Last resort: stringify it so it doesn't crash React
                     return String(s);
                 });
             };
@@ -111,8 +135,56 @@ export default function EditTeamPage() {
     };
 
     if (teamId) fetchTeam();
+
+    // Listen for updates (if you trigger them elsewhere)
+    const handleRefresh = () => { if (teamId) fetchTeam(); };
+    window.addEventListener("dashboardUpdate", handleRefresh);
+    return () => window.removeEventListener("dashboardUpdate", handleRefresh);
+
   }, [teamId, router, setValue]);
 
+  // --- VOTING HANDLERS ---
+  const refreshData = async () => {
+      try {
+          const res = await api.get(`/teams/${teamId}`);
+          setTeamData(res.data);
+      } catch (e) { console.error(e); }
+  };
+
+  const handleVoteRequest = async (reqId: string, decision: 'approve' | 'reject') => { 
+      try { 
+          await api.post(`/teams/${teamId}/member-request/${reqId}/vote`, { decision }); 
+          toast.success("Vote recorded");
+          refreshData(); 
+      } catch (e) { toast.error("Voting failed"); } 
+  };
+
+  const handleVoteDelete = async (decision: 'approve' | 'reject') => {
+      setDeletionProcessing(true);
+      try {
+          const res = await api.post(`/teams/${teamId}/delete/vote`, { decision });
+          if (res.data.status === "deleted") {
+              toast.success("Team deleted");
+              router.push("/dashboard");
+          } else {
+              toast.success("Vote recorded");
+              refreshData();
+          }
+      } catch (e) { toast.error("Voting failed"); } 
+      finally { setDeletionProcessing(false); }
+  };
+
+  const handleVoteComplete = async (decision: 'approve' | 'reject') => {
+      setCompletionProcessing(true);
+      try {
+          await api.post(`/teams/${teamId}/complete/vote`, { decision });
+          toast.success("Vote recorded");
+          refreshData();
+      } catch (e) { toast.error("Voting failed"); } 
+      finally { setCompletionProcessing(false); }
+  };
+
+  // --- FORM HANDLERS ---
   const onSubmit = async (data: TeamFormValues) => {
     try {
       await api.put(`/teams/${teamId}`, {
@@ -129,7 +201,6 @@ export default function EditTeamPage() {
     } catch (e) { toast.error("Save failed."); }
   };
 
-  // Helper to safely display skill labels in JSX
   const getSkillLabel = (skill: any) => {
       if (typeof skill === 'string') return skill;
       if (typeof skill === 'object' && skill?.name) return skill.name;
@@ -145,7 +216,6 @@ export default function EditTeamPage() {
   };
 
   const toggleStackSkill = (s: string) => { 
-      // Ensure we compare strings to strings
       const existing = techStack.find(t => getSkillLabel(t) === s);
       if(existing) setTechStack(techStack.filter(x => getSkillLabel(x) !== s));
       else { setTechStack([...techStack, s]); setStackSearch(""); }
@@ -164,8 +234,8 @@ export default function EditTeamPage() {
 
   const openModal = (type: string) => {
       const config = {
-          delete: { title: "Delete Project", action: () => api.post(`/teams/${teamId}/delete/initiate`, {}).then(() => router.push(`/teams/${teamId}`)) },
-          complete: { title: "Mark Complete", action: () => api.post(`/teams/${teamId}/complete/initiate`, {}).then(() => router.push(`/teams/${teamId}`)) },
+          delete: { title: "Delete Project", action: () => api.post(`/teams/${teamId}/delete/initiate`, {}).then(() => { toast.success("Vote initiated"); refreshData(); }) },
+          complete: { title: "Mark Complete", action: () => api.post(`/teams/${teamId}/complete/initiate`, {}).then(() => { toast.success("Vote initiated"); refreshData(); }) },
           transfer: { title: "Transfer Leadership", action: () => api.post(`/teams/${teamId}/transfer-leadership`, { new_leader_id: newLeaderId }).then(() => router.push(`/teams/${teamId}`)) }
       };
       // @ts-ignore
@@ -173,7 +243,7 @@ export default function EditTeamPage() {
       setModalOpen(true);
   };
 
-  if (loading) return <div className="h-screen bg-black flex items-center justify-center text-gray-500 animate-pulse">Loading Workspace...</div>;
+  if (loading || !teamData) return <div className="h-screen bg-black flex items-center justify-center text-gray-500 animate-pulse">Loading Workspace...</div>;
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-gray-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
@@ -213,6 +283,76 @@ export default function EditTeamPage() {
              </button>
           </div>
         </div>
+
+        {/* --- VOTING PANELS INTEGRATION --- */}
+        <div className="space-y-4 mb-10">
+            {teamData.member_requests && teamData.member_requests.filter(r => r.is_active).map(req => { 
+                const hasVoted = req.votes[currentUserId]; 
+                const approv = Object.values(req.votes).filter(v => v === 'approve').length; 
+                const needed = Math.ceil(teamData.members.length * 0.7); 
+                return (
+                    <motion.div initial={{opacity:0, y:-10}} animate={{opacity:1, y:0}} key={req.id} className="bg-yellow-900/10 backdrop-blur-md border border-yellow-500/30 p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+                        <div className="flex items-center gap-4">
+                            <div className="p-3 bg-yellow-500/20 rounded-full text-yellow-400"><UserMinus className="w-6 h-6" /></div>
+                            <div>
+                                <h3 className="text-lg font-bold text-yellow-400">Vote: {req.type === "leave" ? `Member wants to leave` : `Remove Member`}</h3>
+                                <p className="text-sm text-gray-300 italic">"{req.explanation}"</p>
+                                <p className="text-xs text-gray-500 mt-1">{approv} / {needed} votes needed.</p>
+                            </div>
+                        </div>
+                        {hasVoted ? (
+                            <div className="text-gray-400 text-sm font-bold bg-gray-800 px-4 py-2 rounded-lg">Voted</div>
+                        ) : (
+                            <div className="flex gap-3">
+                                <button onClick={() => handleVoteRequest(req.id, 'approve')} className="px-4 py-2 bg-green-600/80 hover:bg-green-600 rounded-lg font-bold text-sm text-white">Approve</button>
+                                <button onClick={() => handleVoteRequest(req.id, 'reject')} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-sm text-white">Reject</button>
+                            </div>
+                        )}
+                    </motion.div>
+                ); 
+            })}
+            
+            {teamData.deletion_request?.is_active && (
+                <motion.div initial={{opacity:0, y:-10}} animate={{opacity:1, y:0}} className="bg-red-900/10 backdrop-blur-md border border-red-500/30 p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 bg-red-500/20 rounded-full text-red-400"><AlertTriangle className="w-6 h-6" /></div>
+                        <div>
+                            <h3 className="text-lg font-bold text-red-400">Deletion Vote Active</h3>
+                            <p className="text-sm text-gray-400">{Object.values(teamData.deletion_request.votes).filter(v => v === 'approve').length} / {Math.ceil(teamData.members.length * 0.7)} votes needed.</p>
+                        </div>
+                    </div>
+                    {teamData.deletion_request.votes[currentUserId] ? 
+                        <div className="text-gray-400 text-sm font-bold bg-gray-800 px-4 py-2 rounded-lg">Voted: <span className={teamData.deletion_request.votes[currentUserId] === 'approve' ? "text-red-400" : "text-green-400"}>{teamData.deletion_request.votes[currentUserId].toUpperCase()}</span></div> 
+                        : 
+                        <div className="flex gap-3">
+                            <button onClick={() => handleVoteDelete('approve')} disabled={deletionProcessing} className="px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg font-bold text-sm text-white flex items-center gap-2">{deletionProcessing && <Loader2 className="w-3 h-3 animate-spin"/>} Delete</button>
+                            <button onClick={() => handleVoteDelete('reject')} disabled={deletionProcessing} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-sm text-white">Keep</button>
+                        </div>
+                    }
+                </motion.div>
+            )}
+
+            {teamData.status === 'active' && teamData.completion_request?.is_active && (
+                <motion.div initial={{opacity:0, y:-10}} animate={{opacity:1, y:0}} className="bg-green-900/10 backdrop-blur-md border border-green-500/30 p-6 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+                    <div className="flex items-center gap-4">
+                        <div className="p-3 bg-green-500/20 rounded-full text-green-400"><Check className="w-6 h-6" /></div>
+                        <div>
+                            <h3 className="text-lg font-bold text-green-400">Completion Vote</h3>
+                            <p className="text-sm text-gray-400">{Object.values(teamData.completion_request.votes).filter(v => v === 'approve').length} / {Math.ceil(teamData.members.length * 0.7)} votes needed.</p>
+                        </div>
+                    </div>
+                    {teamData.completion_request.votes[currentUserId] ? 
+                        <div className="text-gray-400 text-sm font-bold bg-gray-800 px-4 py-2 rounded-lg">Voted: <span className={teamData.completion_request.votes[currentUserId] === 'approve' ? "text-green-400" : "text-red-400"}>{teamData.completion_request.votes[currentUserId].toUpperCase()}</span></div> 
+                        : 
+                        <div className="flex gap-3">
+                            <button onClick={() => handleVoteComplete('approve')} disabled={completionProcessing} className="px-4 py-2 bg-green-600 hover:bg-green-500 rounded-lg font-bold text-sm text-white flex items-center gap-2">{completionProcessing && <Loader2 className="w-3 h-3 animate-spin"/>} Confirm</button>
+                            <button onClick={() => handleVoteComplete('reject')} disabled={completionProcessing} className="px-4 py-2 bg-gray-700 hover:bg-gray-600 rounded-lg font-bold text-sm text-white">Reject</button>
+                        </div>
+                    }
+                </motion.div>
+            )}
+        </div>
+        {/* --- END VOTING PANELS --- */}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
           

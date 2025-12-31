@@ -74,7 +74,7 @@ export default function SettingsClient() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-950 text-white">
+    <main className="min-h-screen w-full bg-transparent text-zinc-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
       <div className="max-w-4xl mx-auto px-6 py-12">
         
         {/* Header Section */}

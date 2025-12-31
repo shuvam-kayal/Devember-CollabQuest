@@ -6,7 +6,8 @@ import GlobalHeader from "@/components/GlobalHeader";
 import { 
     ArrowLeft, Code2, GraduationCap, Link as LinkIcon, 
     Star, ShieldCheck, Github, Linkedin, Code, Mail, Loader2,
-    MessageSquare, Send, X, Copy, Check, MapPin, Calendar 
+    MessageSquare, Send, X, Check, MapPin, 
+    Ban, Sparkles // Added from Code B
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
@@ -65,6 +66,9 @@ export default function PublicProfile() {
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState("overview"); // 'overview', 'stats', 'reviews'
     const [copied, setCopied] = useState(false);
+    
+    // Added Compatibility State from Code B
+    const [compatibility, setCompatibility] = useState<number | null>(null);
 
     // Email Modal State
     const [showEmailModal, setShowEmailModal] = useState(false);
@@ -72,12 +76,33 @@ export default function PublicProfile() {
     const [emailBody, setEmailBody] = useState("");
     const [sendingEmail, setSendingEmail] = useState(false);
 
+    // Merged useEffect logic from Code B into Code A
     useEffect(() => {
-        api.get(`/users/${params.id}`)
-            .then(res => setUser(res.data))
-            .catch(() => {}) // Handle silently, conditional render will catch null user
-            .finally(() => setLoading(false));
-    }, [params.id]);
+        if (params.id) {
+            setLoading(true);
+            
+            // 1. Fetch User Profile
+            const fetchUser = api.get(`/users/${params.id}`)
+                .then(res => setUser(res.data))
+                .catch((err) => {
+                    if (err.response?.status === 403) {
+                        alert("Profile Unavailable.");
+                        router.push("/dashboard");
+                    } else {
+                        console.error("Profile load error", err);
+                    }
+                });
+
+            // 2. Fetch AI Compatibility Score
+            const fetchCompatibility = api.get(`/users/${params.id}/compatibility`)
+                .then(res => setCompatibility(res.data.score))
+                .catch(err => console.error("Failed to fetch compatibility", err));
+
+            // Wait for both (or at least user fetch) to finish loading
+            Promise.allSettled([fetchUser, fetchCompatibility])
+                .finally(() => setLoading(false));
+        }
+    }, [params.id, router]);
 
     const isVisible = (key: string) => {
         if (!user || !user.visibility_settings) return true; 
@@ -104,9 +129,22 @@ export default function PublicProfile() {
             setEmailBody("");
             alert("Message sent securely.");
         } catch (e) {
-            alert("Failed to send email.");
+            alert("Failed to send email. You may be blocked or the user is invalid.");
         } finally {
             setSendingEmail(false);
+        }
+    };
+
+    // Added Block User Functionality from Code B
+    const handleBlockUser = async () => {
+        if (!confirm(`Are you sure you want to BLOCK ${user.username}?\n\nThey will be removed from your connections, matches, and chats. You won't see them anymore.`)) return;
+        
+        try {
+            await api.post(`/users/${user.id || user._id}/block`);
+            alert("User blocked.");
+            router.push("/dashboard");
+        } catch (e) {
+            alert("Failed to block user.");
         }
     };
 
@@ -146,6 +184,11 @@ export default function PublicProfile() {
                         <button onClick={() => router.back()} className="absolute top-6 left-6 flex items-center gap-2 text-white/70 hover:text-white bg-black/20 backdrop-blur px-4 py-2 rounded-full transition hover:bg-black/40">
                             <ArrowLeft className="w-4 h-4"/> Back
                         </button>
+
+                        {/* NEW: Block Button from Code B (Styled to match Code A) */}
+                        <button onClick={handleBlockUser} className="absolute top-6 right-6 flex items-center gap-2 text-red-400 hover:text-red-200 bg-red-900/20 backdrop-blur px-4 py-2 rounded-full border border-red-500/20 transition hover:bg-red-900/40 text-xs font-bold uppercase tracking-wider">
+                            <Ban className="w-3 h-3"/> Block
+                        </button>
                     </div>
 
                     <div className="px-8 pb-8 relative">
@@ -158,7 +201,16 @@ export default function PublicProfile() {
                                 </div>
                                 <div className="mb-2">
                                     <h1 className="text-4xl font-black text-white tracking-tight">{user.username}</h1>
+                                    
+                                    {/* NEW: Full Name from Code B */}
+                                    {isVisible('full_name') && user.full_name && (
+                                        <div className="text-lg text-zinc-400 font-medium">{user.full_name}</div>
+                                    )}
+
                                     <div className="flex flex-wrap items-center gap-4 text-sm text-zinc-400 mt-2">
+                                        {/* NEW: Age from Code B */}
+                                        {user.age && <span className="bg-zinc-800 px-2 py-0.5 rounded text-xs text-zinc-300">Age: {user.age}</span>}
+                                        
                                         {user.school && <span className="flex items-center gap-1.5"><GraduationCap className="w-4 h-4 text-purple-400"/> {user.school}</span>}
                                         {user.location && <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-blue-400"/> {user.location || "Remote"}</span>}
                                     </div>
@@ -178,7 +230,19 @@ export default function PublicProfile() {
                                         <Mail className="w-4 h-4" />
                                     </button>
                                 </div>
-                                <TrustScoreRing score={user.trust_score || 0} />
+                                
+                                <div className="flex items-center gap-4">
+                                    {/* NEW: AI Match Score from Code B (Styled to match Code A) */}
+                                    {compatibility !== null && (
+                                        <div className="flex flex-col items-center justify-center w-24 h-24 rounded-full border border-purple-500/20 bg-purple-900/10 relative">
+                                            <Sparkles className="w-4 h-4 text-purple-400 absolute top-3" />
+                                            <span className="text-xl font-bold text-purple-400">{compatibility}%</span>
+                                            <span className="text-[9px] uppercase text-zinc-500 font-bold">Match</span>
+                                        </div>
+                                    )}
+
+                                    <TrustScoreRing score={user.trust_score || 0} />
+                                </div>
                             </div>
                         </div>
 
@@ -221,6 +285,8 @@ export default function PublicProfile() {
                                 {user.skills?.map((s:any) => (
                                     <span key={s.name} className="bg-zinc-800 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg text-xs font-medium">
                                         {s.name}
+                                        {/* Added Level display from Code B if available */}
+                                        {s.level ? ` (${s.level})` : ''} 
                                     </span>
                                 )) || <span className="text-zinc-500 text-sm">No skills listed.</span>}
                             </div>

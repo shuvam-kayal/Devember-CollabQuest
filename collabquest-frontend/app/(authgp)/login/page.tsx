@@ -24,25 +24,26 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      // using 'api' instance automatically handles the base URL
-      const response = await api.post("/auth/login/email", { 
-        email, 
-        password 
-      });
-
+      const response = await api.post("/auth/login/email", { email, password });
       const data = response.data;
-      // Store token
-      Cookies.set("token", data.token); 
-      
+
+      // Axios throws on non-2xx, but just in case we are handling it differently:
+      // With axios, response.data IS the data.
+
+      // if (!response.ok) logic is handled by catch block in axios usually, 
+      // but let's keep the structure for now if we were using fetch. 
+      // With axios, we catch errors.
+
+      // Save token and redirect
+      Cookies.set("token", data.token, { expires: 7 }); // Use cookies for consistency with other pages
       router.push("/dashboard");
     } catch (err: any) {
-      console.error("Login failed", err);
-      // specific error message from backend or fallback
-      setError(err.response?.data?.detail || "Invalid credentials.");
+      setError(err.response?.data?.detail || "An error occurred. Try again.");
     } finally {
       setLoading(false);
     }
   };
+
 
   return (
     <main className="relative min-h-screen flex items-center justify-center bg-[#050505] text-white overflow-hidden font-sans">
