@@ -976,12 +976,15 @@ export default function TeamDetails() {
                                     <div className="absolute -left-[27px] top-1 w-5 h-5 bg-black border-4 border-purple-500 rounded-full shadow-[0_0_15px_rgba(168,85,247,0.4)] z-10"></div>
                                     <div className="flex items-baseline gap-4 mb-4"><span className="text-purple-400 font-bold font-mono text-sm tracking-wider uppercase">Week {phase.week}</span><h3 className="text-xl font-semibold text-white">{phase.goal}</h3></div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {phase.tasks.map((task: any, j: number) => (
+                                        {phase.tasks?.map((task: any, j: number) => (
                                             <div key={j} className="bg-zinc-900/60 backdrop-blur-sm border border-white/5 p-5 rounded-xl flex gap-4 hover:border-white/10 transition group">
                                                 <div className="mt-1 opacity-50 group-hover:opacity-100 transition-opacity">{task.role.toLowerCase().includes('front') ? <LayoutDashboard className="w-5 h-5 text-blue-400" /> : task.role.toLowerCase().includes('back') ? <Code2 className="w-5 h-5 text-green-400" /> : <Layers className="w-5 h-5 text-orange-400" />}</div>
                                                 <div><span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">{task.role}</span><p className="text-zinc-300 text-sm leading-relaxed">{task.task}</p></div>
                                             </div>
                                         ))}
+                                        {(!phase.tasks || phase.tasks.length === 0) && (
+                                            <p className="text-zinc-500 text-sm italic col-span-2">No tasks defined for this phase.</p>
+                                        )}
                                     </div>
                                 </motion.div>
                             ))}

@@ -6,7 +6,7 @@ import sys
 if sys.stdout.encoding != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 from app.database import init_db
-from app.models import User, Team, Swipe, Match, Notification, Message, ChatGroup, Question, Block, UnreadCount
+from app.models import User, Team, Swipe, Match, Notification, Message, ChatGroup, Question, Block, UnreadCount, ChatMessage
 
 # Windows Fix
 if os.name == "nt":
@@ -42,6 +42,9 @@ async def clean():
 
     print("🧹 Deleting Unread Counts...")
     await UnreadCount.delete_all()
+
+    print("🧹 Deleting Chat Messages...")
+    await ChatMessage.delete_all()
     
     print("✨ Database is sparkling clean!")
 
