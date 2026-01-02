@@ -299,9 +299,9 @@ export default function TeamDetails() {
                 fetchTeamData();
             }
             setShowExplainModal(false);
-        } catch (e: any) { 
+        } catch (e: any) {
             const msg = e.response?.data?.detail || "Action failed";
-            alert(msg); 
+            alert(msg);
         }
     };
 
@@ -373,16 +373,17 @@ export default function TeamDetails() {
     const getVoteStats = (ann: Announcement) => {
         let req: any = null;
         let required = 0;
+        const totalMembers = team?.members.length || 0;
 
         if (ann.vote_type === 'deletion') {
             req = team?.deletion_request;
-            required = Math.ceil((team?.members.length || 0) * 0.7);
+            required = Math.ceil(totalMembers * 0.7);
         } else if (ann.vote_type === 'completion') {
             req = team?.completion_request;
-            required = Math.ceil((team?.members.length || 0) * 0.7);
+            required = Math.ceil(totalMembers * 0.7);
         } else if (ann.vote_type === 'remove_member' || ann.vote_type === 'leave') {
             req = team?.member_requests.find(r => r.id === ann.vote_related_id);
-            required = (team?.members.length || 0) - 1;
+            required = Math.ceil((totalMembers - 1) * 0.7);
         }
 
         if (!req) return null;
@@ -697,11 +698,23 @@ export default function TeamDetails() {
                                                                 <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-zinc-600 bg-zinc-800/50 px-2 py-1 rounded border border-zinc-800">Announcement</span>
                                                             ) : null}
 
-                                                            {/* Leader Controls */}
-                                                            {isLeader && !isEditing && (
+                                                            {/* Leader Controls (Edit/Delete) - ONLY FOR ANNOUNCEMENTS, NOT VOTES */}
+                                                            {isLeader && !isEditing && !isVote && (
                                                                 <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity ml-2">
-                                                                    <button onClick={() => { setEditingAnnouncementId(ann.id); setEditContent(cleanContent); }} className="p-1.5 text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg"><Edit2 className="w-3.5 h-3.5" /></button>
-                                                                    <button onClick={() => handleDeleteAnnouncement(ann.id)} className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-3.5 h-3.5" /></button>
+                                                                    <button
+                                                                        onClick={() => { setEditingAnnouncementId(ann.id); setEditContent(cleanContent); }}
+                                                                        className="p-1.5 text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition"
+                                                                        title="Edit"
+                                                                    >
+                                                                        <Edit2 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDeleteAnnouncement(ann.id)}
+                                                                        className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition"
+                                                                        title="Delete"
+                                                                    >
+                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                    </button>
                                                                 </div>
                                                             )}
                                                         </div>
@@ -741,12 +754,24 @@ export default function TeamDetails() {
                                                         {/* INTERACTIVE VOTING AREA */}
                                                         {ann.is_vote_active && voteData && voteData.req && (
                                                             <div className="mt-4 pt-4 border-t border-white/5">
+                                                                {/* Progress Stats */}
                                                                 <div className="flex justify-between items-end mb-2">
-                                                                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Progress</span>
-                                                                    <div className="text-right"><span className="text-sm font-black text-white">{voteData.approveCount}</span><span className="text-[10px] text-zinc-500">/{voteData.required}</span></div>
+                                                                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-wide">Consensus Progress</span>
+                                                                    <div className="text-right">
+                                                                        {/* Show Actual Count vs Required */}
+                                                                        <span className="text-lg font-black text-white">{voteData.approveCount}</span>
+                                                                        <span className="text-xs text-zinc-600">/{voteData.required} needed</span>
+                                                                    </div>
                                                                 </div>
+
+                                                                {/* Progress Bar Visual */}
                                                                 <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden mb-4">
-                                                                    <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min((voteData.approveCount / voteData.required) * 100, 100)}%` }} className={`h-full ${voteData.approveCount >= voteData.required ? 'bg-green-500' : 'bg-yellow-500'} relative`}>
+                                                                    <motion.div
+                                                                        initial={{ width: 0 }}
+                                                                        // Ensure width is calculated safely
+                                                                        animate={{ width: `${voteData.required > 0 ? Math.min((voteData.approveCount / voteData.required) * 100, 100) : 0}%` }}
+                                                                        className={`h-full ${voteData.approveCount >= voteData.required ? 'bg-green-500' : 'bg-yellow-500'} relative`}
+                                                                    >
                                                                         <div className="absolute inset-0 bg-white/20 animate-[shimmer_2s_infinite]"></div>
                                                                     </motion.div>
                                                                 </div>
