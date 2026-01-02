@@ -8,7 +8,7 @@ import Link from "next/link";
 import GlobalHeader from "@/components/GlobalHeader";
 import { toast } from "sonner";
 import {
-    Bot, Calendar, Code2, Layers, LayoutDashboard, Loader2, UserPlus, ClipboardList, CheckCircle2, RotateCcw, Bell,
+    Bot, Calendar, Code2, Layers, LayoutDashboard, Loader2, UserPlus, ClipboardList, CheckCircle2, RotateCcw, Bell, Ban,
     Sparkles, X, Plus, RefreshCw, Trash2, Check, AlertTriangle, MessageSquare, Mail, ThumbsUp, Clock, Send, Edit2, Users, Trophy, Megaphone, Play, LogOut, UserMinus, Timer, CalendarClock, ChevronRight, Search, Filter, ExternalLink, AlertOctagon, Vote
 } from "lucide-react";
 
@@ -26,6 +26,10 @@ interface Announcement {
     content: string;
     author_id: string;
     created_at: string;
+    vote_type?: string;
+    vote_related_id?: string;
+    is_vote_active?: boolean;
+    vote_result?: 'passed' | 'failed';
 }
 
 interface Team {
@@ -295,7 +299,10 @@ export default function TeamDetails() {
                 fetchTeamData();
             }
             setShowExplainModal(false);
-        } catch (e) { alert("Action failed"); }
+        } catch (e: any) { 
+            const msg = e.response?.data?.detail || "Action failed";
+            alert(msg); 
+        }
     };
 
     const handleVoteRequest = async (reqId: string, decision: 'approve' | 'reject') => { try { await api.post(`/teams/${teamId}/member-request/${reqId}/vote`, { decision }); fetchTeamData(); } catch (e) { } };
@@ -361,6 +368,31 @@ export default function TeamDetails() {
             await api.post(`/teams/${teamId}/complete/vote`, { decision });
             fetchTeamData();
         } catch (e) { } finally { setCompletionProcessing(false); }
+    };
+
+    const getVoteStats = (ann: Announcement) => {
+        let req: any = null;
+        let required = 0;
+
+        if (ann.vote_type === 'deletion') {
+            req = team?.deletion_request;
+            required = Math.ceil((team?.members.length || 0) * 0.7);
+        } else if (ann.vote_type === 'completion') {
+            req = team?.completion_request;
+            required = Math.ceil((team?.members.length || 0) * 0.7);
+        } else if (ann.vote_type === 'remove_member' || ann.vote_type === 'leave') {
+            req = team?.member_requests.find(r => r.id === ann.vote_related_id);
+            required = (team?.members.length || 0) - 1;
+        }
+
+        if (!req) return null;
+
+        const votes = req.votes || {};
+        const approveCount = Object.values(votes).filter(v => v === 'approve').length;
+        const rejectCount = Object.values(votes).filter(v => v === 'reject').length;
+        const myVote = votes[currentUserId];
+
+        return { req, approveCount, rejectCount, required, myVote };
     };
 
     const handleRateMember = async (targetId: string, score: number) => {
@@ -458,95 +490,6 @@ export default function TeamDetails() {
             </div>
 
             <div className="relative z-40 max-w-7xl mx-auto p-4 md:p-8">
-
-                {/* --- TOP VOTING PANEL (ACTION CENTER) --- */}
-                {hasActiveVotes && (
-                    <div className="mb-12">
-                        <div className="flex items-center gap-2 mb-4 text-sm font-bold uppercase tracking-widest text-zinc-500">
-                            <AlertOctagon className="w-4 h-4 text-orange-500" />
-                            <span>Action Required</span>
-                            <div className="h-px bg-zinc-800 flex-1"></div>
-                        </div>
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {/* Member Requests (Leave/Remove) */}
-                            {team.member_requests?.filter(r => r.is_active).map(req => {
-                                const hasVoted = req.votes[currentUserId];
-                                const approv = Object.values(req.votes).filter(v => v === 'approve').length;
-                                const needed = Math.ceil(team.members.length * 0.7);
-
-                                return (
-                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={req.id} className="bg-yellow-900/10 backdrop-blur-md border border-yellow-500/30 p-5 rounded-2xl flex flex-col justify-between gap-4 shadow-[0_0_20px_rgba(234,179,8,0.05)]">
-                                        <div className="flex items-start gap-4">
-                                            <div className="p-2.5 bg-yellow-500/20 rounded-xl text-yellow-500 shrink-0"><UserMinus className="w-5 h-5" /></div>
-                                            <div>
-                                                <h3 className="font-bold text-yellow-100 text-sm mb-1">{req.type === "leave" ? "Member Leaving" : "Remove Member"}</h3>
-                                                <p className="text-xs text-yellow-200/60 leading-relaxed italic">"{req.explanation}"</p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center justify-between pt-2 border-t border-yellow-500/10">
-                                            <div className="text-[10px] text-yellow-500/50 font-mono flex items-center gap-1"><Vote className="w-3 h-3" /> {approv}/{needed} Votes</div>
-                                            {hasVoted ? <span className="text-xs font-bold text-zinc-500 bg-zinc-900/50 px-3 py-1 rounded-lg border border-zinc-800">Voted</span> : (
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => handleVoteRequest(req.id, 'approve')} className="px-3 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500 hover:text-white rounded-lg text-xs font-bold transition">Approve</button>
-                                                    <button onClick={() => handleVoteRequest(req.id, 'reject')} className="px-3 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500 hover:text-white rounded-lg text-xs font-bold transition">Reject</button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    </motion.div>
-                                );
-                            })}
-
-                            {/* Deletion Request */}
-                            {team.deletion_request?.is_active && (
-                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-red-900/10 backdrop-blur-md border border-red-500/30 p-5 rounded-2xl flex flex-col justify-between gap-4 shadow-[0_0_20px_rgba(239,68,68,0.05)]">
-                                    <div className="flex items-start gap-4">
-                                        <div className="p-2.5 bg-red-500/20 rounded-xl text-red-500 shrink-0"><AlertTriangle className="w-5 h-5" /></div>
-                                        <div>
-                                            <h3 className="font-bold text-red-100 text-sm mb-1">Project Deletion</h3>
-                                            <p className="text-xs text-red-200/60 leading-relaxed">A vote to delete this project has been initiated.</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center justify-between pt-2 border-t border-red-500/10">
-                                        <div className="text-[10px] text-red-500/50 font-mono flex items-center gap-1"><Vote className="w-3 h-3" /> Status Check</div>
-                                        {team.deletion_request.votes[currentUserId] ? (
-                                            <span className="text-xs font-bold text-zinc-500 bg-zinc-900/50 px-3 py-1 rounded-lg border border-zinc-800">Voted</span>
-                                        ) : (
-                                            <div className="flex gap-2">
-                                                <button onClick={() => handleVoteDelete('approve')} disabled={deletionProcessing} className="px-3 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-600 hover:text-white rounded-lg text-xs font-bold transition">Delete</button>
-                                                <button onClick={() => handleVoteDelete('reject')} disabled={deletionProcessing} className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-bold transition">Keep</button>
-                                            </div>
-                                        )}
-                                    </div>
-                                </motion.div>
-                            )}
-
-                            {/* Completion Request */}
-                            {team.status === 'active' && team.completion_request?.is_active && (
-                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-green-900/10 backdrop-blur-md border border-green-500/30 p-5 rounded-2xl flex flex-col justify-between gap-4 shadow-[0_0_20px_rgba(34,197,94,0.05)]">
-                                    <div className="flex items-start gap-4">
-                                        <div className="p-2.5 bg-green-500/20 rounded-xl text-green-500 shrink-0"><Trophy className="w-5 h-5" /></div>
-                                        <div>
-                                            <h3 className="font-bold text-green-100 text-sm mb-1">Project Completion</h3>
-                                            <p className="text-xs text-green-200/60 leading-relaxed">Vote to mark this project as officially completed.</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex items-center justify-between pt-2 border-t border-green-500/10">
-                                        <div className="text-[10px] text-green-500/50 font-mono flex items-center gap-1"><Vote className="w-3 h-3" /> Final Vote</div>
-                                        {team.completion_request.votes[currentUserId] ? (
-                                            <span className="text-xs font-bold text-zinc-500 bg-zinc-900/50 px-3 py-1 rounded-lg border border-zinc-800">Voted</span>
-                                        ) : (
-                                            <div className="flex gap-2">
-                                                <button onClick={() => handleVoteComplete('approve')} disabled={completionProcessing} className="px-3 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-600 hover:text-white rounded-lg text-xs font-bold transition">Confirm</button>
-                                                <button onClick={() => handleVoteComplete('reject')} disabled={completionProcessing} className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-bold transition">Reject</button>
-                                            </div>
-                                        )}
-                                    </div>
-                                </motion.div>
-                            )}
-                        </div>
-                    </div>
-                )}
 
                 {/* --- HEADER --- */}
                 <header className="mb-12">
@@ -647,94 +590,190 @@ export default function TeamDetails() {
                     </div>
                 </div>
 
-                {/* --- NOTICE BOARD --- */}
+                {/* --- NOTICE BOARD (UI OVERHAUL) --- */}
                 {team.members.some(m => (m.id || m._id) === currentUserId) && (
-                    <div className="mb-12">
-                        <div className="bg-[#1a1a1a] border border-yellow-500/20 rounded-[2rem] p-8 relative overflow-hidden">
-                            {/* Decorative Background */}
-                            <div className="absolute top-0 right-0 w-64 h-64 bg-yellow-500/5 rounded-full blur-3xl -z-10"></div>
+                    <div className="mb-16 relative group">
+                        <div className="absolute -inset-1 bg-gradient-to-r from-yellow-600/20 via-orange-600/10 to-purple-600/20 rounded-[2.5rem] blur-xl opacity-50 group-hover:opacity-75 transition duration-1000"></div>
+                        <div className="relative bg-[#0c0c0c] border border-white/5 rounded-[2rem] p-6 md:p-8 overflow-hidden">
 
-                            <h3 className="text-xl font-bold flex items-center gap-3 text-yellow-500 mb-6">
-                                <Megaphone className="w-6 h-6" /> Notice Board
-                            </h3>
+                            {/* Header */}
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                                <div>
+                                    <h3 className="text-2xl font-black flex items-center gap-3 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-400">
+                                        <Megaphone className="w-6 h-6 text-yellow-500" /> Team Notice Board
+                                    </h3>
+                                    <p className="text-zinc-500 text-sm mt-1 ml-1">Updates, votes, and important announcements.</p>
+                                </div>
+                            </div>
 
-                            {/* Post Form (Leader Only) */}
+                            {/* Post Input (Leader Only) */}
                             {isLeader && (
-                                <div className="flex gap-4 mb-8">
-                                    <input
-                                        className="flex-1 bg-black/50 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 outline-none focus:border-yellow-500/50 transition placeholder:text-zinc-600"
-                                        placeholder="Make an announcement to the team..."
-                                        value={announcementText}
-                                        onChange={(e) => setAnnouncementText(e.target.value)}
-                                        onKeyDown={(e) => e.key === 'Enter' && handlePostAnnouncement()}
-                                    />
-                                    <button
-                                        onClick={handlePostAnnouncement}
-                                        disabled={isPostingAnnouncement || !announcementText.trim()}
-                                        className="bg-yellow-600/20 text-yellow-400 border border-yellow-600/30 hover:bg-yellow-600 hover:text-white px-6 py-3 rounded-xl font-bold text-sm transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                                    >
-                                        {isPostingAnnouncement ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                        Post
-                                    </button>
+                                <div className="mb-10 relative group/input">
+                                    <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/10 to-transparent rounded-xl blur-sm opacity-0 group-hover/input:opacity-100 transition"></div>
+                                    <div className="relative flex gap-3 p-1.5 bg-zinc-900/50 border border-zinc-800 rounded-2xl focus-within:border-yellow-500/50 focus-within:bg-zinc-900 transition-all shadow-lg">
+                                        <input
+                                            id="announcement-input"
+                                            className="flex-1 bg-transparent px-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                                            placeholder="Broadcast an announcement..."
+                                            value={announcementText}
+                                            onChange={(e) => setAnnouncementText(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && handlePostAnnouncement()}
+                                        />
+                                        <button onClick={handlePostAnnouncement} disabled={isPostingAnnouncement || !announcementText.trim()} className="bg-zinc-800 hover:bg-yellow-500 hover:text-black text-zinc-400 p-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                                            {isPostingAnnouncement ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                        </button>
+                                    </div>
                                 </div>
                             )}
 
-                            {/* Announcements List */}
-                            <div className="space-y-4 max-h-[300px] overflow-y-auto custom-scrollbar pr-2">
+                            {/* Feed */}
+                            <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-2 -mr-2 pl-1 pt-1">
                                 {(!team.announcements || team.announcements.length === 0) ? (
-                                    <div className="text-center py-8 text-zinc-600 italic">
-                                        No announcements yet.
+                                    <div className="flex flex-col items-center justify-center py-12 text-zinc-600">
+                                        <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mb-4 border border-zinc-800"><Sparkles className="w-6 h-6 text-zinc-700" /></div>
+                                        <p className="font-medium">No updates yet.</p>
                                     </div>
                                 ) : (
-                                    [...team.announcements].reverse().map((ann: any) => (
-                                        <div key={ann.id} className="bg-zinc-900/50 border border-zinc-800 p-4 rounded-xl flex items-start justify-between group transition-all hover:border-zinc-700">
-                                            <div className="w-full">
-                                                {editingAnnouncementId === ann.id ? (
-                                                    /* EDIT MODE */
-                                                    <div className="flex flex-col gap-2">
-                                                        <textarea
-                                                            value={editContent}
-                                                            onChange={(e) => setEditContent(e.target.value)}
-                                                            className="w-full bg-black/50 border border-purple-500/50 rounded-lg p-2 text-sm text-zinc-200 outline-none resize-none"
-                                                            rows={3}
-                                                        />
-                                                        <div className="flex gap-2 justify-end">
-                                                            <button onClick={() => setEditingAnnouncementId(null)} className="text-xs text-zinc-400 hover:text-white">Cancel</button>
-                                                            <button onClick={handleUpdateAnnouncement} className="text-xs bg-purple-600 text-white px-3 py-1 rounded hover:bg-purple-500">Save</button>
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    /* VIEW MODE */
-                                                    <div>
-                                                        <p className="text-zinc-300 text-sm leading-relaxed whitespace-pre-wrap">{ann.content}</p>
-                                                        <div className="flex items-center gap-2 mt-2">
-                                                            <span className="text-[10px] font-bold text-yellow-500/70 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/10">LEADER</span>
-                                                            <span className="text-[10px] text-zinc-600">{new Date(ann.created_at).toLocaleString()}</span>
-                                                        </div>
-                                                    </div>
-                                                )}
-                                            </div>
+                                    [...team.announcements].reverse().map((ann) => {
+                                        const isVote = !!ann.vote_type;
+                                        const author = team.members.find(m => (m.id || m._id) === ann.author_id);
+                                        const isEditing = editingAnnouncementId === ann.id;
 
-                                            {isLeader && editingAnnouncementId !== ann.id && (
-                                                <div className="flex flex-col gap-1 ml-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                    <button
-                                                        onClick={() => { setEditingAnnouncementId(ann.id); setEditContent(ann.content); }}
-                                                        className="p-1.5 text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10 rounded transition"
-                                                        title="Edit"
-                                                    >
-                                                        <Edit2 className="w-3.5 h-3.5" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteAnnouncement(ann.id)}
-                                                        className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded transition"
-                                                        title="Delete"
-                                                    >
-                                                        <Trash2 className="w-3.5 h-3.5" />
-                                                    </button>
+                                        // --- CONTENT PARSING LOGIC ---
+                                        // We extract the "Target" and "Reason" from the raw string if it matches the pattern
+                                        const removeRegex = /Vote to remove \*\*(.*?)\*\*\.\nReason: _(.*?)_/;
+                                        const leaveRegex = /\*\*(.*?)\*\* wants to leave the team\.\nReason: _(.*?)_/;
+
+                                        let renderTitle = "Announcement";
+                                        let renderTarget = "";
+                                        let renderReason = "";
+                                        let cleanContent = ann.content.replace(/(\n\n)?(❌|✅|⚠️|🏆|🚨).*(VOTE FAILED|VOTE PASSED|VOTE EXPIRED).*/g, "").trim();
+
+                                        if (ann.vote_type === 'remove_member') {
+                                            renderTitle = "Vote to Remove Member";
+                                            const match = cleanContent.match(removeRegex);
+                                            if (match) { renderTarget = match[1]; renderReason = match[2]; }
+                                        } else if (ann.vote_type === 'leave') {
+                                            renderTitle = "Member Leaving Request";
+                                            const match = cleanContent.match(leaveRegex);
+                                            if (match) { renderTarget = match[1]; renderReason = match[2]; }
+                                        } else if (ann.vote_type === 'deletion') {
+                                            renderTitle = "Project Deletion Vote";
+                                            renderReason = "Leader requested to delete the project.";
+                                        } else if (ann.vote_type === 'completion') {
+                                            renderTitle = "Project Completion Vote";
+                                            renderReason = "Leader wants to mark project as complete.";
+                                        }
+
+                                        // Vote Stats & Math Fix
+                                        let voteData = ann.is_vote_active ? getVoteStats(ann) : null;
+                                        if (voteData && (ann.vote_type === 'remove_member' || ann.vote_type === 'leave')) {
+                                            voteData.required = Math.max(1, (team.members.length || 0) - 1);
+                                        }
+                                        const votePassed = ann.vote_result === 'passed';
+                                        const voteFailed = ann.vote_result === 'failed';
+
+                                        return (
+                                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={ann.id} className={`relative overflow-hidden p-6 rounded-3xl border transition-all hover:shadow-xl group/card ${ann.is_vote_active ? 'bg-gradient-to-br from-yellow-900/10 to-zinc-900/50 border-yellow-500/20 shadow-[0_4px_20px_-10px_rgba(234,179,8,0.2)]' : 'bg-zinc-900/40 border-white/5 hover:bg-zinc-900/60'}`}>
+                                                {ann.is_vote_active && <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.5)]"></div>}
+
+                                                <div className="flex gap-4">
+                                                    <img src={author?.avatar_url || "https://github.com/shadcn.png"} className="w-10 h-10 rounded-full border border-zinc-700 object-cover mt-1 shrink-0" />
+
+                                                    <div className="flex-1 min-w-0">
+                                                        {/* Header Badges */}
+                                                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                                                            <span className="font-bold text-zinc-200">{author?.username || "Unknown"}</span>
+                                                            <span className="text-zinc-600 text-xs">•</span>
+                                                            <span className="text-xs text-zinc-500">{new Date(ann.created_at).toLocaleString()}</span>
+
+                                                            {ann.is_vote_active ? (
+                                                                <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border bg-yellow-500 text-black border-yellow-500 shadow-[0_0_10px_rgba(234,179,8,0.4)]">Active Vote</span>
+                                                            ) : votePassed ? (
+                                                                <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border bg-green-500 text-black border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.4)]">Passed</span>
+                                                            ) : voteFailed ? (
+                                                                <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border bg-red-500 text-white border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]">Failed</span>
+                                                            ) : !isVote ? (
+                                                                <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-zinc-600 bg-zinc-800/50 px-2 py-1 rounded border border-zinc-800">Announcement</span>
+                                                            ) : null}
+
+                                                            {/* Leader Controls */}
+                                                            {isLeader && !isEditing && (
+                                                                <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity ml-2">
+                                                                    <button onClick={() => { setEditingAnnouncementId(ann.id); setEditContent(cleanContent); }} className="p-1.5 text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg"><Edit2 className="w-3.5 h-3.5" /></button>
+                                                                    <button onClick={() => handleDeleteAnnouncement(ann.id)} className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg"><Trash2 className="w-3.5 h-3.5" /></button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* CONTENT DISPLAY */}
+                                                        {isEditing ? (
+                                                            <div className="mt-2 animate-in fade-in zoom-in-95 duration-200">
+                                                                <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="w-full bg-black/50 border border-purple-500/50 rounded-xl p-3 text-sm text-zinc-200 outline-none focus:ring-1 focus:ring-purple-500/50 resize-none min-h-[80px]" autoFocus />
+                                                                <div className="flex gap-2 justify-end mt-2">
+                                                                    <button onClick={() => setEditingAnnouncementId(null)} className="px-3 py-1.5 text-xs font-bold text-zinc-400 hover:text-white bg-zinc-800 rounded-lg hover:bg-zinc-700">Cancel</button>
+                                                                    <button onClick={handleUpdateAnnouncement} className="px-3 py-1.5 text-xs font-bold text-white bg-purple-600 rounded-lg hover:bg-purple-500 shadow-lg shadow-purple-900/20">Save</button>
+                                                                </div>
+                                                            </div>
+                                                        ) : isVote ? (
+                                                            // --- CUSTOM VOTE CARD UI ---
+                                                            <div className="bg-zinc-950/50 rounded-xl p-4 border border-zinc-800/50">
+                                                                <div className="flex items-start gap-3 mb-3">
+                                                                    <div className={`mt-0.5 p-2 rounded-lg ${ann.vote_type === 'remove_member' ? 'bg-red-500/10 text-red-500' : 'bg-blue-500/10 text-blue-500'}`}>
+                                                                        {ann.vote_type === 'remove_member' ? <UserMinus className="w-5 h-5" /> : <AlertOctagon className="w-5 h-5" />}
+                                                                    </div>
+                                                                    <div>
+                                                                        <h4 className="font-bold text-zinc-200 text-sm">{renderTitle}</h4>
+                                                                        {renderTarget && <p className="text-xs text-zinc-400 mt-0.5">Target: <span className="text-white font-bold">{renderTarget}</span></p>}
+                                                                    </div>
+                                                                </div>
+                                                                {renderReason && (
+                                                                    <div className="bg-black/40 rounded-lg p-3 text-xs text-zinc-400 italic border-l-2 border-zinc-700">
+                                                                        "{renderReason}"
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            // --- STANDARD ANNOUNCEMENT ---
+                                                            <p className="text-zinc-300 text-sm leading-relaxed whitespace-pre-wrap">{cleanContent}</p>
+                                                        )}
+
+                                                        {/* INTERACTIVE VOTING AREA */}
+                                                        {ann.is_vote_active && voteData && voteData.req && (
+                                                            <div className="mt-4 pt-4 border-t border-white/5">
+                                                                <div className="flex justify-between items-end mb-2">
+                                                                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Progress</span>
+                                                                    <div className="text-right"><span className="text-sm font-black text-white">{voteData.approveCount}</span><span className="text-[10px] text-zinc-500">/{voteData.required}</span></div>
+                                                                </div>
+                                                                <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden mb-4">
+                                                                    <motion.div initial={{ width: 0 }} animate={{ width: `${Math.min((voteData.approveCount / voteData.required) * 100, 100)}%` }} className={`h-full ${voteData.approveCount >= voteData.required ? 'bg-green-500' : 'bg-yellow-500'} relative`}>
+                                                                        <div className="absolute inset-0 bg-white/20 animate-[shimmer_2s_infinite]"></div>
+                                                                    </motion.div>
+                                                                </div>
+
+                                                                {voteData.myVote ? (
+                                                                    <div className="flex items-center justify-center gap-2 p-2 bg-zinc-800/50 rounded-lg border border-zinc-700/50 text-xs text-zinc-400">
+                                                                        You voted: <span className={`font-black uppercase ${voteData.myVote === 'approve' ? 'text-green-400' : 'text-red-400'}`}>{voteData.myVote}</span>
+                                                                    </div>
+                                                                ) : (
+                                                                    (ann.vote_related_id && (ann.vote_type === 'remove_member' || ann.vote_type === 'leave') && voteData.req.target_user_id === currentUserId) ? (
+                                                                        <div className="w-full py-2 bg-red-500/5 border border-red-500/10 rounded-lg text-center text-xs font-bold text-red-400 flex items-center justify-center gap-2">
+                                                                            <Ban className="w-3 h-3" /> Cannot vote on self
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="grid grid-cols-2 gap-3">
+                                                                            <button onClick={() => { if (ann.vote_type === 'deletion') handleVoteDelete('approve'); else if (ann.vote_type === 'completion') handleVoteComplete('approve'); else if (ann.vote_related_id) handleVoteRequest(ann.vote_related_id, 'approve'); }} className="bg-zinc-800 hover:bg-green-500/20 border border-zinc-700 hover:border-green-500/50 rounded-lg py-2 transition-all flex items-center justify-center gap-2 text-xs font-bold text-zinc-300 hover:text-green-400"><Check className="w-3 h-3" /> Approve</button>
+                                                                            <button onClick={() => { if (ann.vote_type === 'deletion') handleVoteDelete('reject'); else if (ann.vote_type === 'completion') handleVoteComplete('reject'); else if (ann.vote_related_id) handleVoteRequest(ann.vote_related_id, 'reject'); }} className="bg-zinc-800 hover:bg-red-500/20 border border-zinc-700 hover:border-red-500/50 rounded-lg py-2 transition-all flex items-center justify-center gap-2 text-xs font-bold text-zinc-300 hover:text-red-400"><X className="w-3 h-3" /> Reject</button>
+                                                                        </div>
+                                                                    )
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                            )}
-                                        </div>
-                                    ))
+                                            </motion.div>
+                                        );
+                                    })
                                 )}
                             </div>
                         </div>

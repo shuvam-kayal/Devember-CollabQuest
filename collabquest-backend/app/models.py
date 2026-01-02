@@ -182,6 +182,10 @@ class Announcement(BaseModel):
     content: str
     author_id: str
     created_at: datetime = Field(default_factory=datetime.now)
+    vote_type: Optional[str] = None 
+    vote_related_id: Optional[str] = None 
+    is_vote_active: bool = False
+    vote_result: Optional[str] = None
 
 class Team(Document):
     name: str

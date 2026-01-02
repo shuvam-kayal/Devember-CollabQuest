@@ -120,6 +120,41 @@ async def get_optional_user(authorization: Optional[str] = Header(None)) -> Opti
         return await User.get(payload.get("sub"))
     except: return None
 
+def check_vote_expiration(team: Team):
+    now = datetime.now()
+    dirty = False
+    
+    # Check Member Requests
+    for req in team.member_requests:
+        if req.is_active and (now - req.created_at) > timedelta(days=2):
+            req.is_active = False
+            # Find related announcement and update
+            for ann in team.announcements:
+                if ann.vote_related_id == req.id:
+                    ann.is_vote_active = False
+                    ann.content += "\n\n⏰ **VOTE EXPIRED** (Time limit reached)"
+            dirty = True
+
+    # Check Deletion (Example logic for expiration if desired)
+    if team.deletion_request and team.deletion_request.is_active and (now - team.deletion_request.created_at) > timedelta(days=2):
+        team.deletion_request.is_active = False
+        for ann in team.announcements:
+            if ann.vote_type == 'deletion':
+                ann.is_vote_active = False
+                ann.content += "\n\n⏰ **VOTE EXPIRED**"
+        dirty = True
+
+    # Check Completion
+    if team.completion_request and team.completion_request.is_active and (now - team.completion_request.created_at) > timedelta(days=2):
+        team.completion_request.is_active = False
+        for ann in team.announcements:
+            if ann.vote_type == 'completion':
+                ann.is_vote_active = False
+                ann.content += "\n\n⏰ **VOTE EXPIRED**"
+        dirty = True
+        
+    return dirty
+
 @router.post("/", response_model=Team)
 async def create_team(team_data: TeamCreate, current_user: User = Depends(get_current_user)):
     skills_to_embed = team_data.active_needed_skills if team_data.active_needed_skills else team_data.needed_skills
@@ -148,6 +183,8 @@ async def get_all_teams():
 async def get_team_details(team_id: str, current_user: Optional[User] = Depends(get_optional_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404, detail="Team not found")
+    if check_vote_expiration(team):
+        await team.save()
     actual_leader_id = team.leader_id or (team.members[0] if team.members else None)
     member_objects = []
     for uid in team.members:
@@ -634,7 +671,7 @@ async def leave_project(team_id: str, req: ActionWithExplanation, current_user: 
     if team.status == "completed": raise HTTPException(400, "Project is completed and locked. You cannot leave.")
     
     leader_id = team.leader_id or team.members[0]
-    if uid == leader_id: raise HTTPException(400, "Leader cannot leave. Delete project instead.")
+    if uid == leader_id: raise HTTPException(400, "Leader cannot leave. Transfer Leadership first.")
     
     existing = next((r for r in team.member_requests if r.target_user_id == uid and r.is_active), None)
     if existing: raise HTTPException(400, "Request already active")
@@ -647,13 +684,25 @@ async def leave_project(team_id: str, req: ActionWithExplanation, current_user: 
         await Match.find(Match.project_id == team_id, Match.user_id == uid).delete()
         return {"status": "left"}
     else:
-        request = MemberRequest(target_user_id=uid, type="leave", explanation=req.explanation, initiator_id=uid, votes={uid: "approve"})
+        request = MemberRequest(target_user_id=uid, type="leave", explanation=req.explanation, initiator_id=uid, votes={})
         team.member_requests.append(request)
+        sys_announcement = Announcement(
+            content=f"⚠️ **MEMBER LEAVE VOTE**\n\n**{current_user.username}** wants to leave the team.\nReason: _{req.explanation}_",
+            author_id=uid,
+            vote_type="leave",
+            vote_related_id=request.id,
+            is_vote_active=True
+        )
+        team.announcements.append(sys_announcement)
         await team.save()
         for m_id in team.members:
+            await manager.send_personal_message({
+                "event": "dashboardUpdate",
+                "message": f"Vote initiated: {current_user.username} wants to leave."
+            }, m_id)
+            
             if m_id != uid:
                 await Notification(recipient_id=m_id, sender_id=uid, message=f"{current_user.username} wants to leave. Vote required.", type="member_request", related_id=team_id).insert()
-                await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
         return {"status": "vote_initiated"}
 
 @router.post("/{team_id}/members/{user_id}/remove")
@@ -677,14 +726,26 @@ async def remove_member_request(team_id: str, user_id: str, req: ActionWithExpla
         await Match.find(Match.project_id == team_id, Match.user_id == user_id).delete()
         return {"status": "removed"}
     else:
-        request = MemberRequest(target_user_id=user_id, type="remove", explanation=req.explanation, initiator_id=str(current_user.id), votes={str(current_user.id): "approve"})
+        request = MemberRequest(target_user_id=user_id, type="remove", explanation=req.explanation, initiator_id=str(current_user.id), votes={})
         team.member_requests.append(request)
+        sys_announcement = Announcement(
+            content=f"⚠️ **REMOVE MEMBER VOTE**\n\nVote to remove **{target_name}**.\nReason: _{req.explanation}_",
+            author_id=str(current_user.id),
+            vote_type="remove_member",
+            vote_related_id=request.id, # Link specifically to this request
+            is_vote_active=True
+        )
+        team.announcements.append(sys_announcement)
         await team.save()
         for m_id in team.members:
+            await manager.send_personal_message({
+                "event": "dashboardUpdate", 
+                "message": f"Vote initiated: Remove {target_name}"
+            }, m_id)
+
             if m_id != str(current_user.id): 
                 msg = f"Vote to remove {target_name}." if m_id != user_id else f"Vote initiated to remove YOU from {team.name}."
                 await Notification(recipient_id=m_id, sender_id=str(current_user.id), message=msg, type="member_request", related_id=team_id).insert()
-                await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
         return {"status": "vote_initiated"}
 
 @router.post("/{team_id}/member-request/{request_id}/vote")
@@ -696,10 +757,12 @@ async def vote_member_request(team_id: str, request_id: str, vote: VoteRequest, 
     req = team.member_requests[req_index]
     uid = str(current_user.id)
     if uid not in team.members: raise HTTPException(403, "Not a member")
+    if uid == req.target_user_id:
+        raise HTTPException(403, "You cannot vote on a request targeting you.")
     req.votes[uid] = vote.decision
     total_members = len(team.members)
     approvals = sum(1 for v in req.votes.values() if v == "approve")
-    threshold = math.ceil(total_members * 0.7)
+    threshold = math.ceil((total_members-1) * 0.7)
     
     leader_id = team.leader_id or team.members[0]
     status_msg = "voted"
@@ -715,12 +778,22 @@ async def vote_member_request(team_id: str, request_id: str, vote: VoteRequest, 
                 await Notification(recipient_id=m_id, sender_id=uid, message=f"Vote passed. Member {action_text} the team.", type="info").insert()
                 await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
         status_msg = "approved"
-    elif len(req.votes) == total_members:
+    elif len(req.votes) == total_members-1:
         req.is_active = False
         for m_id in team.members:
             await Notification(recipient_id=m_id, sender_id=uid, message=f"Vote failed for member {req.type}.", type="info").insert()
         status_msg = "rejected"
     team.member_requests[req_index] = req
+    if status_msg == "approved":
+        for ann in team.announcements:
+            if ann.vote_related_id == request_id:
+                ann.is_vote_active = False
+                ann.vote_result = "passed"
+    elif status_msg == "rejected":
+        for ann in team.announcements:
+            if ann.vote_related_id == request_id:
+                ann.is_vote_active = False
+                ann.vote_result = "failed"
     await team.save()
     return {"status": status_msg}
 
@@ -736,14 +809,28 @@ async def initiate_deletion(team_id: str, current_user: User = Depends(get_curre
         await team.delete()
         return {"status": "deleted"}
     uid = str(current_user.id)
-    req = DeletionRequest(is_active=True, initiator_id=uid, votes={uid: "approve"})
+    req = DeletionRequest(is_active=True, initiator_id=uid, votes={})
     team.deletion_request = req
+
+    sys_announcement = Announcement(
+        content="🚨 **PROJECT DELETION VOTE**\n\nThe leader has requested to delete this project.",
+        author_id=uid,
+        vote_type="deletion",
+        vote_related_id="deletion",
+        is_vote_active=True
+    )
+    team.announcements.append(sys_announcement)
+
     await team.save()
     for member_id in team.members:
+        await manager.send_personal_message({
+            "event": "dashboardUpdate",
+            "message": "Deletion Vote Initiated"
+        }, member_id)
+        
         if member_id != uid:
             notif = Notification(recipient_id=member_id, sender_id=uid, message=f"Vote to DELETE project '{team.name}'.", type="deletion_request", related_id=team_id)
             await notif.insert()
-            await manager.send_personal_message({"event": "notification", "notification": {"_id": str(notif.id), "message": notif.message, "type": notif.type, "is_read": False, "related_id": team_id, "sender_id": notif.sender_id}}, member_id)
     return {"status": "initiated"}
 
 @router.post("/{team_id}/delete/vote")
@@ -751,12 +838,16 @@ async def vote_deletion(team_id: str, vote: VoteRequest, current_user: User = De
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
     if not team.deletion_request or not team.deletion_request.is_active: raise HTTPException(400)
+    
     uid = str(current_user.id)
     team.deletion_request.votes[uid] = vote.decision
-    await team.save()
+
     await Notification.find(Notification.recipient_id == uid, Notification.type == "deletion_request", Notification.related_id == team_id).update({"$set": {"action_status": "voted", "is_read": True}})
+    
     total = len(team.members)
     approvals = sum(1 for v in team.deletion_request.votes.values() if v == "approve")
+    
+    # 1. Consensus Reached (Deleted)
     if approvals >= math.ceil(total * 0.7):
         await team.delete()
         await ChatGroup.find(ChatGroup.team_id == team_id).delete()
@@ -764,13 +855,24 @@ async def vote_deletion(team_id: str, vote: VoteRequest, current_user: User = De
         for m_id in team.members:
             await manager.send_personal_message({"event": "team_deleted", "message": f"Project '{team.name}' deleted."}, m_id)
         return {"status": "deleted"}
+        
+    # 2. Vote Failed (Kept) - UPDATE ANNOUNCEMENT HERE
     if len(team.deletion_request.votes) == total:
         team.deletion_request = None
+        
+        # Update Announcement
+        for ann in team.announcements:
+            if ann.vote_type == 'deletion' and ann.is_vote_active:
+                ann.is_vote_active = False
+                ann.vote_result = "failed"
+        
         await team.save()
         for m_id in team.members:
             await Notification(recipient_id=m_id, sender_id=uid, message=f"Vote failed. Project '{team.name}' kept.", type="info").insert()
             await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
         return {"status": "kept"}
+        
+    await team.save()
     return {"status": "voted"}
 
 @router.post("/{team_id}/complete/initiate")
@@ -785,43 +887,71 @@ async def initiate_completion(team_id: str, current_user: User = Depends(get_cur
         await team.save()
         return {"status": "completed"}
     uid = str(current_user.id)
-    req = CompletionRequest(is_active=True, initiator_id=uid, votes={uid: "approve"})
+    req = CompletionRequest(is_active=True, initiator_id=uid, votes={})
     team.completion_request = req
+    sys_announcement = Announcement(
+        content="🏆 **PROJECT COMPLETION VOTE**\n\nThe leader wants to mark this project as complete.",
+        author_id=uid,
+        vote_type="completion",
+        vote_related_id="completion",
+        is_vote_active=True
+    )
+    team.announcements.append(sys_announcement)
     await team.save()
     for member_id in team.members:
+        await manager.send_personal_message({
+            "event": "dashboardUpdate",
+            "message": "Completion Vote Initiated"
+        }, member_id)
+
         if member_id != uid:
             notif = Notification(recipient_id=member_id, sender_id=uid, message=f"Vote to mark project '{team.name}' as COMPLETED.", type="completion_request", related_id=team_id)
             await notif.insert()
-            await manager.send_personal_message({"event": "notification", "notification": {"_id": str(notif.id), "message": notif.message, "type": notif.type, "is_read": False, "related_id": team_id, "sender_id": notif.sender_id}}, member_id)
+
     return {"status": "initiated"}
 
-@router.post("/{team_id}/complete/vote")
-async def vote_completion(team_id: str, vote: VoteRequest, current_user: User = Depends(get_current_user)):
+@router.post("/{team_id}/delete/vote")
+async def vote_deletion(team_id: str, vote: VoteRequest, current_user: User = Depends(get_current_user)):
     team = await Team.get(team_id)
     if not team: raise HTTPException(404)
-    if not team.completion_request or not team.completion_request.is_active: raise HTTPException(400)
+    if not team.deletion_request or not team.deletion_request.is_active: raise HTTPException(400)
+    
     uid = str(current_user.id)
-    team.completion_request.votes[uid] = vote.decision
-    await team.save()
-    await Notification.find(Notification.recipient_id == uid, Notification.type == "completion_request", Notification.related_id == team_id).update({"$set": {"action_status": "voted", "is_read": True}})
+    team.deletion_request.votes[uid] = vote.decision
+    
+    # REMOVED INCORRECT BLOCK HERE (The one that closed vote on single reject)
+
+    await Notification.find(Notification.recipient_id == uid, Notification.type == "deletion_request", Notification.related_id == team_id).update({"$set": {"action_status": "voted", "is_read": True}})
+    
     total = len(team.members)
-    approvals = sum(1 for v in team.completion_request.votes.values() if v == "approve")
+    approvals = sum(1 for v in team.deletion_request.votes.values() if v == "approve")
+    
+    # 1. Consensus Reached (Deleted)
     if approvals >= math.ceil(total * 0.7):
-        team.status = "completed"
-        team.is_looking_for_members = False 
-        team.completion_request = None 
+        await team.delete()
+        await ChatGroup.find(ChatGroup.team_id == team_id).delete()
+        await Match.find(Match.project_id == team_id).delete()
+        for m_id in team.members:
+            await manager.send_personal_message({"event": "team_deleted", "message": f"Project '{team.name}' deleted."}, m_id)
+        return {"status": "deleted"}
+        
+    # 2. Vote Failed (Kept) - UPDATE ANNOUNCEMENT HERE
+    if len(team.deletion_request.votes) == total:
+        team.deletion_request = None
+        
+        # Update Announcement
+        for ann in team.announcements:
+            if ann.vote_type == 'deletion' and ann.is_vote_active:
+                ann.is_vote_active = False
+                ann.vote_result = "failed"
+        
         await team.save()
         for m_id in team.members:
-            await Notification(recipient_id=m_id, sender_id=uid, message=f"Project '{team.name}' completed! Rate your team now.", type="rating", related_id=team_id).insert()
-            await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
-        return {"status": "completed"}
-    if len(team.completion_request.votes) == total:
-        team.completion_request = None
-        await team.save()
-        for m_id in team.members:
-            await Notification(recipient_id=m_id, sender_id=uid, message=f"Completion vote failed for '{team.name}'.", type="info").insert()
+            await Notification(recipient_id=m_id, sender_id=uid, message=f"Vote failed. Project '{team.name}' kept.", type="info").insert()
             await manager.send_personal_message({"event": "dashboardUpdate"}, m_id)
         return {"status": "kept"}
+        
+    await team.save()
     return {"status": "voted"}
 
 @router.post("/{team_id}/rate")
