@@ -34,24 +34,58 @@ async def create_match(user_id: str, project_id: str, leader_id: str):
     existing = await Match.find_one(Match.user_id == user_id, Match.project_id == project_id)
     if existing: return True
 
+    # 1. Fetch the project to get the name
+    project = await Team.get(project_id)
+    project_name = project.name if project else "a project"
+
     await Match(user_id=user_id, project_id=project_id, leader_id=leader_id).insert()
+    
     try:
-        await Notification(recipient_id=user_id, sender_id=leader_id, message=f"You matched with {project_name}! View your My projects tab to take action!", type="match", related_id=project_id).insert()
+        # 2. Assign the notification to 'n1' so we can access its ID for the socket message
+        n1 = await Notification(
+            recipient_id=user_id, 
+            sender_id=leader_id, 
+            message=f"You matched with {project_name}! View your My projects tab to take action!", 
+            type="match", 
+            related_id=project_id
+        ).insert()
+        
+        # 3. Send Real-Time Message to Candidate
         await manager.send_personal_message({
             "event": "notification",
             "notification": {
-                "_id": str(n1.id), "message": n1.message, "type": "match", "is_read": False, "related_id": project_id
+                "_id": str(n1.id), 
+                "message": n1.message, 
+                "type": "match", 
+                "is_read": False, 
+                "related_id": project_id
             }
         }, user_id)
+        
         candidate = await User.get(user_id)
         c_name = candidate.username if candidate else "Someone"
-        await Notification(recipient_id=leader_id, sender_id=user_id, message=f"{c_name} matched with your project {project_name}! Check your Project details page to take action!", type="match", related_id=project_id).insert()
+        
+        # 4. Assign the notification to 'n2' for the leader
+        n2 = await Notification(
+            recipient_id=leader_id, 
+            sender_id=user_id, 
+            message=f"{c_name} matched with your project {project_name}! Check your Project details page to take action!", 
+            type="match", 
+            related_id=project_id
+        ).insert()
+
+        # 5. Send Real-Time Message to Leader
         await manager.send_personal_message({
             "event": "notification",
             "notification": {
-                "_id": str(n2.id), "message": n2.message, "type": "match", "is_read": False, "related_id": project_id
+                "_id": str(n2.id), 
+                "message": n2.message, 
+                "type": "match", 
+                "is_read": False, 
+                "related_id": project_id
             }
         }, leader_id)
+
     except Exception as e:
         print(f"Match Notification Error: {e}")
         pass
@@ -255,7 +289,7 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                         
                         if not exists:
                             # 2. Create the Notification with the correct TYPE
-                            await Notification(
+                            notif = await Notification(
                                 recipient_id=leader_id, 
                                 sender_id=str(current_user.id),  # Matches your model
                                 related_id=str(project.id),      # Matches your model (Team ID)
@@ -312,7 +346,7 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                             Notification.related_id == str(target_project_id)
                         )
                         if not exists:
-                            await Notification(
+                            notif = await Notification(
                                 recipient_id=target_user_id, 
                                 sender_id=str(current_user.id), 
                                 message=f"A Team Leader is interested in you for {p_name}!", 

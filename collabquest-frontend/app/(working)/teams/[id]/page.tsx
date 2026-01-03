@@ -98,10 +98,8 @@ export default function TeamDetails() {
     const [ratingExplanation, setRatingExplanation] = useState("");
 
     // Interest Modal State
-    const [showInterestModal, setShowInterestModal] = useState(false);
-    const [interestMessage, setInterestMessage] = useState("");
     const [isSendingInterest, setIsSendingInterest] = useState(false);
-
+    
     // Modals & Inputs
     const [showEmailModal, setShowEmailModal] = useState(false);
     const [emailRecipient, setEmailRecipient] = useState<{ id: string, name: string } | null>(null);
@@ -307,21 +305,32 @@ export default function TeamDetails() {
 
     // --- INTEREST REQUEST (User -> Project) ---
     const handleSendInterest = async () => {
+        if (team?.has_liked) return;
         setIsSendingInterest(true);
         try {
-            await api.post("/matches/swipe", {
+            const res = await api.post("/matches/swipe", {
                 target_id: teamId,
                 direction: "right",
                 type: "project",
-                related_id: teamId,
-                message: interestMessage // Sending the custom message
+                related_id: teamId
             });
-            if (team) setTeam({ ...team, has_liked: true });
-            setShowInterestModal(false);
-            alert("Request sent successfully!");
-            window.dispatchEvent(new Event("dashboardUpdate"));
-        } catch (err) {
-            alert("Failed to send request.");
+
+            if (res.data.status === 'cooldown') {
+                toast.info(res.data.message || "You already liked this recently. Cooldown is active.");
+                // Optimistically update UI even on cooldown if desired, or just alert user
+                if (team) setTeam({ ...team, has_liked: true });
+            } else {
+                if (team) setTeam({ ...team, has_liked: true });
+                if (res.data.is_match) {
+                    toast.success("It's a Match! 🎉");
+                } else {
+                    toast.success("Interest sent!");
+                }
+                window.dispatchEvent(new Event("dashboardUpdate"));
+            }
+        } catch (err: any) {
+            const msg = err.response?.data?.message || "Failed to send request.";
+            toast.error(msg);
         } finally {
             setIsSendingInterest(false);
         }
@@ -582,11 +591,11 @@ export default function TeamDetails() {
                             )}
                             {!isMember && (
                                 <button
-                                    onClick={() => setShowInterestModal(true)}
-                                    disabled={team.has_liked}
+                                    onClick={handleSendInterest}
+                                    disabled={team.has_liked || isSendingInterest}
                                     className={`w-full px-6 py-4 rounded-xl font-bold transition flex items-center justify-center gap-2 ${team.has_liked ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20'}`}
                                 >
-                                    <ThumbsUp className="w-5 h-5" />
+                                    {isSendingInterest ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsUp className="w-5 h-5" />}
                                     {team.has_liked ? "Request Sent" : "I'm Interested"}
                                 </button>
                             )}
@@ -1213,47 +1222,6 @@ export default function TeamDetails() {
 
                 {/* Extension Modal */}
                 {showExtensionModal && (<div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4"><motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#111] border border-white/10 p-10 rounded-[2.5rem] w-full max-w-md shadow-2xl"><h2 className="text-2xl font-black tracking-tight mb-2 text-white">Extend Deadline</h2><p className="text-zinc-500 text-sm mb-8 leading-relaxed">Requesting an extension will require a team vote.</p><input type="datetime-local" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-white mb-8 outline-none focus:border-blue-500 transition-all" style={{ colorScheme: 'dark' }} value={extensionDate} onChange={e => setExtensionDate(e.target.value)} /><div className="flex gap-4"><button onClick={confirmExtensionRequest} className="flex-1 bg-blue-600 py-4 rounded-xl font-bold text-sm shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500 active:scale-95 text-white">Submit Request</button><button onClick={() => setShowExtensionModal(false)} className="flex-1 bg-zinc-900 border border-zinc-800 py-4 rounded-xl font-bold text-sm text-zinc-400 hover:bg-zinc-800 hover:text-white transition">Cancel</button></div></motion.div></div>)}
-
-                {/* INTEREST MESSAGE MODAL */}
-                {showInterestModal && (
-                    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            className="bg-zinc-900 border border-zinc-800 p-8 rounded-[2rem] w-full max-w-md shadow-2xl"
-                        >
-                            <div className="flex justify-between items-center mb-6">
-                                <h2 className="text-xl font-bold text-white">Join Request</h2>
-                                <button onClick={() => setShowInterestModal(false)} className="p-2 hover:bg-zinc-800 rounded-full transition">
-                                    <X className="w-5 h-5 text-zinc-500" />
-                                </button>
-                            </div>
-
-                            <p className="text-zinc-400 text-sm mb-4">
-                                Add a short message to tell the leader why you're a good fit.
-                            </p>
-
-                            <textarea
-                                className="w-full bg-black border border-zinc-800 rounded-xl p-4 h-32 outline-none focus:border-purple-500 transition text-zinc-200 resize-none mb-6"
-                                placeholder="Ex: I have 2 years of React experience and love this idea..."
-                                value={interestMessage}
-                                onChange={(e) => setInterestMessage(e.target.value)}
-                                autoFocus
-                            />
-
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={handleSendInterest}
-                                    disabled={isSendingInterest}
-                                    className="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-900/20"
-                                >
-                                    {isSendingInterest ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-                                    Send Request
-                                </button>
-                            </div>
-                        </motion.div>
-                    </div>
-                )}
             </AnimatePresence>
         </div>
     );
