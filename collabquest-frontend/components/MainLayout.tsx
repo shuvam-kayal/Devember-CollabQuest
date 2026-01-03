@@ -29,8 +29,6 @@ export default function MainLayout({ children }: { children: React.ReactNode }) 
         </main>
       </div>
 
-      {/* 5. Onboarding Tutorial */}
-      <OnboardingTutorial />
     </div>
   );
 }
