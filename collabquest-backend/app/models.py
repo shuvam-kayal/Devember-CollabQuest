@@ -33,12 +33,20 @@ class ConnectedAccounts(BaseModel):
     codeforces: Optional[str] = None
     leetcode: Optional[str] = None
 
+class RatingBreakdown(BaseModel):
+    technical: int = 5
+    communication: int = 5
+    collaboration: int = 5
+    reliability: int = 5
+    problem_solving: int = 5
+
 class Rating(BaseModel):
     project_id: str
     project_name: str
     rater_id: str
     rater_name: str
-    score: int
+    score: float
+    breakdown: RatingBreakdown
     explanation: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.now)
 
@@ -148,6 +156,8 @@ class User(Document):
     connections: List[str] = [] # List of User IDs
     connection_requests_received: List[str] = [] # List of User IDs
     connection_requests_sent: List[str] = [] # List of User IDs
+
+    project_highlights: List[str] = []
     
     class Settings: name = "users"
 
@@ -177,6 +187,16 @@ class Task(BaseModel):
     
     created_at: datetime = Field(default_factory=datetime.now)
 
+class Announcement(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    content: str
+    author_id: str
+    created_at: datetime = Field(default_factory=datetime.now)
+    vote_type: Optional[str] = None 
+    vote_related_id: Optional[str] = None 
+    is_vote_active: bool = False
+    vote_result: Optional[str] = None
+
 class Team(Document):
     name: str
     description: str
@@ -196,6 +216,8 @@ class Team(Document):
     deletion_request: Optional[DeletionRequest] = None
     completion_request: Optional[CompletionRequest] = None 
     member_requests: List[MemberRequest] = [] 
+
+    announcements: List[Announcement] = []
     
     tasks: List[Task] = []
     embedding: List[float] = [] 

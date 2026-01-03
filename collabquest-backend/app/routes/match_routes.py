@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 from app.models import User, Team, Swipe, Match, Notification, Block
 from app.auth.dependencies import get_current_user
+from app.routes.chat_routes import manager
 from app.services.matching_service import calculate_project_match, calculate_user_compatibility, calculate_match_score
 from beanie.operators import Or
 import traceback
@@ -33,13 +34,61 @@ async def create_match(user_id: str, project_id: str, leader_id: str):
     existing = await Match.find_one(Match.user_id == user_id, Match.project_id == project_id)
     if existing: return True
 
+    # 1. Fetch the project to get the name
+    project = await Team.get(project_id)
+    project_name = project.name if project else "a project"
+
     await Match(user_id=user_id, project_id=project_id, leader_id=leader_id).insert()
+    
     try:
-        await Notification(recipient_id=user_id, sender_id=leader_id, message=f"You matched with a project!", type="match", related_id=project_id).insert()
+        # 2. Assign the notification to 'n1' so we can access its ID for the socket message
+        n1 = await Notification(
+            recipient_id=user_id, 
+            sender_id=leader_id, 
+            message=f"You matched with {project_name}! View your My projects tab to take action!", 
+            type="match", 
+            related_id=project_id
+        ).insert()
+        
+        # 3. Send Real-Time Message to Candidate
+        await manager.send_personal_message({
+            "event": "notification",
+            "notification": {
+                "_id": str(n1.id), 
+                "message": n1.message, 
+                "type": "match", 
+                "is_read": False, 
+                "related_id": project_id
+            }
+        }, user_id)
+        
         candidate = await User.get(user_id)
         c_name = candidate.username if candidate else "Someone"
-        await Notification(recipient_id=leader_id, sender_id=user_id, message=f"{c_name} matched with your project!", type="match", related_id=project_id).insert()
-    except: pass
+        
+        # 4. Assign the notification to 'n2' for the leader
+        n2 = await Notification(
+            recipient_id=leader_id, 
+            sender_id=user_id, 
+            message=f"{c_name} matched with your project {project_name}! Check your Project details page to take action!", 
+            type="match", 
+            related_id=project_id
+        ).insert()
+
+        # 5. Send Real-Time Message to Leader
+        await manager.send_personal_message({
+            "event": "notification",
+            "notification": {
+                "_id": str(n2.id), 
+                "message": n2.message, 
+                "type": "match", 
+                "is_read": False, 
+                "related_id": project_id
+            }
+        }, leader_id)
+
+    except Exception as e:
+        print(f"Match Notification Error: {e}")
+        pass
     return True
 
 @router.get("/projects")
@@ -228,28 +277,44 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                     is_match = True
                     await create_match(str(current_user.id), str(project.id), leader_id)
                 else:
-                    # ✅ FIXED LOGIC FOR NOTIFICATION
+                    # ✅ FIX: Send 'project_like' info notification instead of 'join_request'
                     try:
                         # 1. Deduplicate: Don't spam the leader if they already requested
                         exists = await Notification.find_one(
                             Notification.recipient_id == leader_id,
                             Notification.sender_id == str(current_user.id),
-                            Notification.type == "join_request",  # Check for existing request
+                            Notification.type == "project_like", 
                             Notification.related_id == str(project.id)
                         )
                         
                         if not exists:
                             # 2. Create the Notification with the correct TYPE
-                            await Notification(
+                            notif = await Notification(
                                 recipient_id=leader_id, 
                                 sender_id=str(current_user.id),  # Matches your model
                                 related_id=str(project.id),      # Matches your model (Team ID)
-                                type="join_request",             # <--- CRITICAL: Triggers buttons on frontend
-                                message=data.message or f"{current_user.username} wants to join {project.name}", 
+                                type="project_like",             
+                                message=data.message or f"{current_user.username} liked your project {project.name}", 
                                 is_read=False,
                                 action_status="pending"
                             ).insert()
-                            print(f"✅ Join Request sent to {leader_id}")
+                            await manager.send_personal_message({
+                                "event": "notification",
+                                "notification": {
+                                    "id": str(notif.id),
+                                    "message": notif.message,
+                                    "type": notif.type,
+                                    "sender_id": notif.sender_id,
+                                    "related_id": notif.related_id,
+                                    "is_read": False,
+                                    "data": { # Enrich for Frontend
+                                        "candidate_name": current_user.username,
+                                        "candidate_avatar": current_user.avatar_url,
+                                        "project_name": project.name
+                                    }
+                                }
+                            }, leader_id)
+                            print(f"✅ Project Like sent to {leader_id}")
                     except Exception as e: 
                         print(f"❌ Notification Failed: {e}")
                         pass
@@ -277,18 +342,34 @@ async def handle_swipe(data: SwipeRequest, current_user: User = Depends(get_curr
                         exists = await Notification.find_one(
                             Notification.recipient_id == target_user_id,
                             Notification.sender_id == str(current_user.id),
-                            Notification.type == "team_invite", # <--- Changed from 'like'
+                            Notification.type == "candidate_like", 
                             Notification.related_id == str(target_project_id)
                         )
                         if not exists:
-                            await Notification(
+                            notif = await Notification(
                                 recipient_id=target_user_id, 
                                 sender_id=str(current_user.id), 
                                 message=f"A Team Leader is interested in you for {p_name}!", 
-                                type="team_invite", # <--- CRITICAL: Triggers buttons
+                                type="candidate_like", 
                                 related_id=str(target_project_id),
                                 is_read=False
                             ).insert()
+                            await manager.send_personal_message({
+                                "event": "notification",
+                                "notification": {
+                                    "id": str(notif.id),
+                                    "message": notif.message,
+                                    "type": notif.type,
+                                    "sender_id": notif.sender_id,
+                                    "related_id": notif.related_id,
+                                    "is_read": False,
+                                    "data": { # Enrich
+                                        "candidate_name": current_user.username,
+                                        "candidate_avatar": current_user.avatar_url,
+                                        "project_name": p_name
+                                    }
+                                }
+                            }, target_user_id)
                     except Exception as e:
                         print(f"❌ Notification Error: {e}")
             else:

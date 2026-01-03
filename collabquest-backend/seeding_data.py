@@ -11,7 +11,7 @@ from app.database import init_db
 from app.models import (
     User, Team, Skill, DayAvailability, TimeRange, Question, 
     TrustBreakdown, Education, Link, Achievement, ConnectedAccounts, 
-    VisibilitySettings, Rating, Task
+    VisibilitySettings, Rating, Task, Announcement
 )
 
 # Windows Fix
@@ -293,21 +293,6 @@ async def seed():
                 status="planning",
                 target_members=random.randint(3, 6),
                 embedding=[],
-                tasks=[
-                    Task(
-                        description="Initial Setup",
-                        assignee_id=str(leader.id),
-                        deadline=datetime.now() + timedelta(days=7),
-                        status="completed",
-                        completed_at=datetime.now()
-                    ),
-                    Task(
-                        description="Design Database Schema",
-                        assignee_id=str(leader.id),
-                        deadline=datetime.now() + timedelta(days=14),
-                        status="pending"
-                    )
-                ]
             )
             
             existing = await Team.find_one(Team.name == title)

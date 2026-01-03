@@ -51,9 +51,25 @@ interface TaskItem {
     project_name: string;
 }
 
+interface TopUser {
+    id: string;
+    username: string;
+    avatar_url: string;
+    trust_score: number;
+    skills: string[];
+}
+
+interface TopProject {
+    id: string;
+    name: string;
+    description: string;
+    favorite_count: number;
+    needed_skills: string[];
+}
+
 /* -------------------- STYLED COMPONENTS -------------------- */
 const GlassCard = ({ children, className = "", onClick }: any) => (
-    <div 
+    <div
         onClick={onClick}
         className={`relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md shadow-xl transition-all duration-300 hover:bg-white/10 hover:border-white/20 hover:shadow-purple-500/10 ${className}`}
     >
@@ -61,39 +77,45 @@ const GlassCard = ({ children, className = "", onClick }: any) => (
     </div>
 );
 
+const NEWS_ITEMS = [
+    { version: "v1.2.0", date: "Dec 10, 2025", title: "Real-time Chat & Video", desc: "Collaborate instantly with your team using the new chat module." },
+    { version: "v1.1.5", date: "Dec 23, 2025", title: "Smart Matching 2.0", desc: "Improved algorithm for better skill-based team recommendations." },
+    { version: "v1.1.0", date: "Jan 02, 2026", title: "Dark Mode & UI Polish", desc: "A sleek new look for late-night coding sessions." },
+];
+
 /* -------------------- HELPER COMPONENT: SIDEBAR LINK -------------------- */
-const SidebarLink = ({ 
-    icon: Icon, 
-    label, 
-    isCollapsed, 
-    active, 
-    onClick, 
-    id 
-}: { 
-    icon: any, 
-    label: string, 
-    isCollapsed: boolean, 
-    active: boolean, 
-    onClick: () => void, 
-    id?: string 
+const SidebarLink = ({
+    icon: Icon,
+    label,
+    isCollapsed,
+    active,
+    onClick,
+    id
+}: {
+    icon: any,
+    label: string,
+    isCollapsed: boolean,
+    active: boolean,
+    onClick: () => void,
+    id?: string
 }) => (
-    <div 
+    <div
         id={id}
         onClick={onClick}
         className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 cursor-pointer group mb-1
-        ${active 
-            ? "bg-purple-600/10 text-purple-400 border border-purple-500/20" 
-            : "text-gray-400 hover:bg-white/5 hover:text-white hover:border hover:border-white/5 border border-transparent"
-        }`}
+        ${active
+                ? "bg-purple-600/10 text-purple-400 border border-purple-500/20"
+                : "text-gray-400 hover:bg-white/5 hover:text-white hover:border hover:border-white/5 border border-transparent"
+            }`}
     >
         <Icon className={`w-5 h-5 shrink-0 ${active ? "text-purple-400" : "text-gray-500 group-hover:text-white"}`} />
-        
+
         {!isCollapsed && (
             <span className="font-medium text-sm whitespace-nowrap overflow-hidden transition-all">
                 {label}
             </span>
         )}
-        
+
         {active && !isCollapsed && (
             <motion.div layoutId="active-pill" className="ml-auto w-1.5 h-1.5 rounded-full bg-purple-400" />
         )}
@@ -107,14 +129,14 @@ function DashboardContent() {
     const pathname = usePathname();
 
     // --- UI STATES ---
-    const [isCollapsed, setIsCollapsed] = useState(false); 
+    const [isCollapsed, setIsCollapsed] = useState(false);
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [showEmailModal, setShowEmailModal] = useState(false);
 
     // --- DATA STATES ---
     const [user, setUser] = useState<UserProfile | null>(null);
     const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
-    
+
     // Feature State
     const [activeTasks, setActiveTasks] = useState<TaskItem[]>([]);
     const [historyTasks, setHistoryTasks] = useState<TaskItem[]>([]);
@@ -125,26 +147,30 @@ function DashboardContent() {
     const [emailSubject, setEmailSubject] = useState("");
     const [emailBody, setEmailBody] = useState("");
 
+    const [topUsers, setTopUsers] = useState<TopUser[]>([]);
+    const [topProjects, setTopProjects] = useState<TopProject[]>([]);
+
     // --- INITIALIZATION ---
     useEffect(() => {
         const urlToken = searchParams.get("token");
         let activeToken = urlToken;
-        
-        if (urlToken) { 
-            Cookies.set("token", urlToken, { expires: 7 }); 
-            router.replace("/dashboard"); 
-        } else { 
-            activeToken = Cookies.get("token") || null; 
-            if (!activeToken) { 
-                router.push("/"); 
-                return; 
-            } 
+
+        if (urlToken) {
+            Cookies.set("token", urlToken, { expires: 7 });
+            router.replace("/dashboard");
+        } else {
+            activeToken = Cookies.get("token") || null;
+            if (!activeToken) {
+                router.push("/");
+                return;
+            }
         }
-        
+
         if (activeToken) {
             fetchUserProfile(activeToken);
             fetchMatches(activeToken);
             fetchDashboardData(activeToken);
+            fetchLeaderboards(activeToken);
         }
 
         const handleSync = () => {
@@ -171,7 +197,7 @@ function DashboardContent() {
                 headers: { Authorization: `Bearer ${jwt}` }
             };
             const taskRes = await api.get("/users/me/tasks", config);
-            
+
             setActiveTasks(taskRes.data.active);
             setHistoryTasks(taskRes.data.history);
 
@@ -181,6 +207,17 @@ function DashboardContent() {
             setTasksLoading(false);
         }
     }
+
+    const fetchLeaderboards = async (jwt: string) => {
+        try {
+            const [uRes, pRes] = await Promise.all([
+                api.get("/users/top"),
+                api.get("/teams/top")
+            ]);
+            setTopUsers(uRes.data);
+            setTopProjects(pRes.data);
+        } catch (e) { console.error("Failed to fetch leaderboards"); }
+    };
 
     // --- ACTIONS ---
     const handleReapply = async (match: Match) => {
@@ -233,15 +270,15 @@ function DashboardContent() {
         } catch (err) { alert("Action failed"); fetchMatches(token!); }
         finally { setProcessingId(null); }
     }
-    
+
     const handleTaskSubmit = async (task: TaskItem) => {
-        if(!confirm("Mark this task as done and submit for review?")) return;
+        if (!confirm("Mark this task as done and submit for review?")) return;
         const token = Cookies.get("token");
         try {
             setActiveTasks(prev => prev.filter(t => t.id !== task.id));
             await api.post(`/teams/${task.project_id}/tasks/${task.id}/submit`);
             fetchDashboardData(token!);
-        } catch(e) { alert("Failed to submit task"); }
+        } catch (e) { alert("Failed to submit task"); }
     };
 
     const openEmailComposer = (match: Match) => { setEmailRecipient({ id: match.id, name: match.name }); setShowEmailModal(true); }
@@ -278,7 +315,7 @@ function DashboardContent() {
 
     return (
         <div className="flex h-screen bg-[#050505] text-white overflow-hidden font-sans selection:bg-purple-500/30">
-            
+
             {/* --- AMBIENT BACKGROUND --- */}
             <div className="fixed inset-0 z-0 pointer-events-none">
                 <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-900/10 rounded-full blur-[120px] mix-blend-screen" />
@@ -296,10 +333,10 @@ function DashboardContent() {
 
                 <nav className="flex-1 px-4 space-y-2 overflow-hidden overflow-y-auto custom-scrollbar">
                     <SidebarLink icon={LayoutDashboard} label="Dashboard" isCollapsed={isCollapsed} active={pathname === "/dashboard"} onClick={() => router.push("/dashboard")} />
-                    <SidebarLink icon={Users} label="Find Team" isCollapsed={isCollapsed} active={pathname === "/find-team"} onClick={() => router.push("/find-team")} />
-                    
+                    <SidebarLink icon={Users} label="Projects" isCollapsed={isCollapsed} active={pathname === "/find-team"} onClick={() => router.push("/find-team")} />
+
                     {!isCollapsed && <p className="text-[10px] text-gray-500 uppercase px-2 pt-4 mb-2 font-bold tracking-widest">Personal</p>}
-                    
+
                     <SidebarLink icon={Code2} label="My Projects" isCollapsed={isCollapsed} active={pathname.startsWith("/myproject")} onClick={() => router.push("/myproject")} />
                     <SidebarLink icon={Star} label="Saved" isCollapsed={isCollapsed} active={pathname.includes("saved")} onClick={() => router.push("/saved")} />
                     <SidebarLink icon={Globe} label="Network" isCollapsed={isCollapsed} active={pathname.includes("Network")} onClick={() => router.push("/netwrok")} />
@@ -319,8 +356,8 @@ function DashboardContent() {
                 </div>
             </aside>
             {/* --- END SIDEBAR --- */}
-            
-            
+
+
             {/* --- MAIN CONTENT --- */}
             <div className={`flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300 z-10`}>
                 {/* FIX: Added relative z-50 to the header container. 
@@ -332,26 +369,26 @@ function DashboardContent() {
 
                 <main className="flex-1 overflow-y-auto p-4 md:p-8 scroll-smooth custom-scrollbar">
                     <div className="max-w-[1600px] mx-auto space-y-10 pb-20">
-                        
+
                         {/* 1. HERO SECTION */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <Link href="/profile" className="block h-full">
                                 <GlassCard className="p-8 h-full flex items-center gap-6 group cursor-pointer relative">
                                     <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
                                     <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white/10 p-2 rounded-full"><Edit2 className="w-4 h-4 text-purple-300" /></div>
-                                    
+
                                     <img src={user.avatar_url} alt="Avatar" className="w-20 h-20 rounded-full border-2 border-purple-500 shadow-lg shadow-purple-500/20 object-cover" />
                                     <div className="relative z-10">
                                         <h2 className="text-2xl font-bold text-white mb-2">Welcome back, {user.username}!</h2>
                                         <div className="flex flex-wrap gap-2">
                                             {user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => (
                                                 <span key={i} className="text-xs bg-white/10 px-3 py-1 rounded-full text-white/70 border border-white/5">{s.name}</span>
-                                            )) : <span className="text-xs text-yellow-400/80 italic flex items-center gap-1"><Plus className="w-3 h-3"/> Add skills to profile</span>}
+                                            )) : <span className="text-xs text-yellow-400/80 italic flex items-center gap-1"><Plus className="w-3 h-3" /> Add skills to profile</span>}
                                         </div>
                                     </div>
                                 </GlassCard>
                             </Link>
-                            
+
                             <GlassCard className="p-8 h-full flex flex-col justify-center items-start relative overflow-hidden">
                                 <div className="absolute top-[-50%] right-[-10%] w-[200px] h-[200px] bg-blue-500/20 rounded-full blur-[60px]" />
                                 <div className="relative z-10 w-full">
@@ -367,60 +404,163 @@ function DashboardContent() {
                                 </div>
                             </GlassCard>
                         </div>
-                        
+
                         {/* 2. SPLIT LAYOUT */}
                         <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
-                            
 
-                            {/* --- RIGHT COLUMN: ACTIVE TASKS --- */}
-                            <div className="xl:col-span-2 w-full space-y-4">
-                                <div className="flex items-center justify-between">
-                                    <h3 className="text-lg font-bold flex items-center gap-2 text-white">
-                                        <div className="p-1.5 bg-green-500/20 rounded-lg"><CheckCircle className="w-4 h-4 text-green-400" /></div>
-                                        Active Tasks
-                                    </h3>
-                                    <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{activeTasks.length} Pending</span>
+                            {/* --- LEFT COLUMN: ACTIVE TASKS & NEWS --- */}
+                            <div className="xl:col-span-2 w-full space-y-8">
+
+                                {/* EXISTING ACTIVE TASKS BLOCK (Keep as is) */}
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <h3 className="text-lg font-bold flex items-center gap-2 text-white">
+                                            <div className="p-1.5 bg-green-500/20 rounded-lg"><CheckCircle className="w-4 h-4 text-green-400" /></div>
+                                            Active Tasks
+                                        </h3>
+                                        <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{activeTasks.length} Pending</span>
+                                    </div>
+                                    {/* ... (Existing Task Mapping Code) ... */}
+                                    {tasksLoading ? <div className="text-white/50 flex items-center gap-2 py-8"><Loader2 className="w-4 h-4 animate-spin" /> Loading tasks...</div> :
+                                        activeTasks.length === 0 ? (
+                                            <GlassCard className="p-12 text-center flex flex-col items-center justify-center gap-4 border-dashed border-white/20 min-h-[250px]">
+                                                <div className="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center"><Check className="w-8 h-8 text-green-500/40" /></div>
+                                                <p className="text-white/50">All caught up! No pending tasks.</p>
+                                            </GlassCard>
+                                        ) : (
+                                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                                                {activeTasks.map(task => (
+                                                    <GlassCard key={task.id} className="p-5 flex flex-col justify-between group h-full border-l-4 border-l-purple-500">
+                                                        <div className="mb-4">
+                                                            <div className="flex justify-between items-start mb-3">
+                                                                <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-white/5 text-white/60 px-2 py-1 rounded border border-white/10 hover:bg-white/10 transition font-mono uppercase tracking-wide truncate max-w-[150px]">
+                                                                    {task.project_name}
+                                                                </Link>
+                                                                <span className={`text-[10px] uppercase tracking-widest font-bold px-2 py-1 rounded ${task.status === 'review' ? 'bg-yellow-500/10 text-yellow-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                                                    {task.status}
+                                                                </span>
+                                                            </div>
+                                                            <h4 className="font-bold text-white text-sm line-clamp-2 leading-relaxed group-hover:text-purple-300 transition-colors">{task.description}</h4>
+                                                        </div>
+                                                        <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
+                                                            <div className="flex items-center gap-1.5 text-xs text-white/40">
+                                                                <Calendar className="w-3.5 h-3.5" />
+                                                                {new Date(task.deadline).toLocaleDateString()}
+                                                            </div>
+                                                            {task.status !== 'review' && (
+                                                                <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-green-900/20">
+                                                                    <Check className="w-3 h-3" /> Mark Done
+                                                                </button>
+                                                            )}
+                                                        </div>
+                                                    </GlassCard>
+                                                ))}
+                                            </div>
+                                        )}
                                 </div>
 
-                                {tasksLoading ? <div className="text-white/50 flex items-center gap-2 py-8"><Loader2 className="w-4 h-4 animate-spin"/> Loading tasks...</div> : 
-                                activeTasks.length === 0 ? (
-                                    <GlassCard className="p-12 text-center flex flex-col items-center justify-center gap-4 border-dashed border-white/20 min-h-[250px]">
-                                        <div className="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center"><Check className="w-8 h-8 text-green-500/40" /></div>
-                                        <p className="text-white/50">All caught up! No pending tasks.</p>
-                                    </GlassCard>
-                                ) : (
-                                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                        {activeTasks.map(task => (
-                                            <GlassCard key={task.id} className="p-5 flex flex-col justify-between group h-full border-l-4 border-l-purple-500">
-                                                <div className="mb-4">
-                                                    <div className="flex justify-between items-start mb-3">
-                                                        <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-white/5 text-white/60 px-2 py-1 rounded border border-white/10 hover:bg-white/10 transition font-mono uppercase tracking-wide truncate max-w-[150px]">
-                                                            {task.project_name}
-                                                        </Link>
-                                                        <span className={`text-[10px] uppercase tracking-widest font-bold px-2 py-1 rounded ${task.status === 'review' ? 'bg-yellow-500/10 text-yellow-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                                                            {task.status}
-                                                        </span>
-                                                    </div>
-                                                    <h4 className="font-bold text-white text-sm line-clamp-2 leading-relaxed group-hover:text-purple-300 transition-colors">{task.description}</h4>
+                                {/* --- NEW SECTION: NEWS FROM COLLABQUEST --- */}
+                                <div>
+                                    <h3 className="text-lg font-bold flex items-center gap-2 text-white mb-4">
+                                        <div className="p-1.5 bg-blue-500/20 rounded-lg"><Sparkles className="w-4 h-4 text-blue-400" /></div>
+                                        News from CollabQuest
+                                    </h3>
+                                    <GlassCard className="divide-y divide-white/10">
+                                        {NEWS_ITEMS.map((news, i) => (
+                                            <div key={i} className="p-4 flex gap-4 hover:bg-white/5 transition group">
+                                                <div className="flex flex-col items-center min-w-[60px]">
+                                                    <span className="text-[10px] font-black text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">{news.version}</span>
+                                                    <span className="text-[10px] text-white/30 mt-1 font-mono">{news.date}</span>
                                                 </div>
-                                                <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
-                                                    <div className="flex items-center gap-1.5 text-xs text-white/40">
-                                                        <Calendar className="w-3.5 h-3.5" />
-                                                        {new Date(task.deadline).toLocaleDateString()}
-                                                    </div>
-                                                    {task.status !== 'review' && (
-                                                        <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-green-900/20">
-                                                            <Check className="w-3 h-3" /> Mark Done
-                                                        </button>
-                                                    )}
+                                                <div>
+                                                    <h4 className="font-bold text-sm text-white group-hover:text-blue-400 transition">{news.title}</h4>
+                                                    <p className="text-xs text-white/50 mt-1 leading-relaxed">{news.desc}</p>
                                                 </div>
-                                            </GlassCard>
+                                            </div>
                                         ))}
-                                    </div>
-                                )}
+                                        <div className="p-3 text-center">
+                                            <span className="text-[10px] text-white/20 uppercase tracking-widest font-bold">More updates coming soon</span>
+                                        </div>
+                                    </GlassCard>
+                                </div>
+
+                            </div>
+
+                            {/* --- RIGHT COLUMN: LEADERBOARDS (NEW) --- */}
+                            <div className="space-y-8">
+
+                                {/* TOP USERS */}
+                                <div>
+                                    <h3 className="text-sm font-bold uppercase tracking-widest text-white/50 mb-4 flex items-center gap-2">
+                                        <Award className="w-4 h-4 text-yellow-500" /> Top Users
+                                    </h3>
+                                    <GlassCard className="overflow-hidden">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="border-b border-white/10 bg-white/5 text-[10px] uppercase text-white/40">
+                                                    <th className="p-3 font-bold">#</th>
+                                                    <th className="p-3 font-bold">User</th>
+                                                    <th className="p-3 font-bold text-right">Trust</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-white/5">
+                                                {topUsers.map((u, i) => (
+                                                    <tr key={u.id} className="hover:bg-white/5 transition cursor-pointer" onClick={() => router.push(`/profile/${u.id}`)}>
+                                                        <td className="p-3 text-xs font-mono text-white/30 w-8">{i + 1}</td>
+                                                        <td className="p-3">
+                                                            <div className="flex items-center gap-2">
+                                                                <img src={u.avatar_url || "https://github.com/shadcn.png"} className="w-6 h-6 rounded-full border border-white/10" />
+                                                                <span className={`text-xs font-bold ${i < 3 ? 'text-yellow-400' : 'text-white'}`}>{u.username}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3 text-right">
+                                                            <span className="text-xs font-mono font-bold text-green-400">{u.trust_score.toFixed(1)}</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </GlassCard>
+                                </div>
+
+                                {/* TOP PROJECTS */}
+                                <div>
+                                    <h3 className="text-sm font-bold uppercase tracking-widest text-white/50 mb-4 flex items-center gap-2">
+                                        <Star className="w-4 h-4 text-purple-500" /> Top Projects
+                                    </h3>
+                                    <GlassCard className="overflow-hidden">
+                                        <table className="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr className="border-b border-white/10 bg-white/5 text-[10px] uppercase text-white/40">
+                                                    <th className="p-3 font-bold">#</th>
+                                                    <th className="p-3 font-bold">Project</th>
+                                                    <th className="p-3 font-bold text-right">Likes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-white/5">
+                                                {topProjects.map((p, i) => (
+                                                    <tr key={p.id} className="hover:bg-white/5 transition cursor-pointer" onClick={() => router.push(`/teams/${p.id}`)}>
+                                                        <td className="p-3 text-xs font-mono text-white/30 w-8">{i + 1}</td>
+                                                        <td className="p-3">
+                                                            <div className="font-bold text-xs text-white mb-0.5 truncate max-w-[120px]">{p.name}</div>
+                                                            <div className="flex gap-1">
+                                                                {p.needed_skills.slice(0, 2).map((s, idx) => (
+                                                                    <span key={idx} className="text-[8px] bg-white/10 px-1 rounded text-white/50">{s}</span>
+                                                                ))}
+                                                            </div>
+                                                        </td>
+                                                        <td className="p-3 text-right">
+                                                            <span className="text-xs font-mono font-bold text-purple-400">{p.favorite_count}</span>
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </GlassCard>
+                                </div>
                             </div>
                         </div>
-                        
+
                         {/* Task History */}
                         {historyTasks.length > 0 && (
                             <div className="w-full">
@@ -429,7 +569,7 @@ function DashboardContent() {
                                     {historyTasks.map((task, i) => (
                                         <div key={i} className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition group">
                                             <div className="flex items-center gap-4">
-                                                <div className="p-2 bg-green-500/10 rounded-full text-green-500 group-hover:scale-110 transition-transform"><Check className="w-3 h-3"/></div>
+                                                <div className="p-2 bg-green-500/10 rounded-full text-green-500 group-hover:scale-110 transition-transform"><Check className="w-3 h-3" /></div>
                                                 <div className="flex flex-col">
                                                     <span className="text-sm font-medium text-white/50 line-through decoration-white/20">{task.description}</span>
                                                     <span className="text-[10px] text-white/30">{task.project_name}</span>
@@ -445,15 +585,15 @@ function DashboardContent() {
                     </div>
                 </main>
             </div>
-            
+
             {/* Email Modal */}
             <AnimatePresence>
                 {showEmailModal && emailRecipient && (
                     <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                        <motion.div 
-                            initial={{ scale: 0.95, opacity: 0 }} 
-                            animate={{ scale: 1, opacity: 1 }} 
-                            exit={{ scale: 0.95, opacity: 0 }} 
+                        <motion.div
+                            initial={{ scale: 0.95, opacity: 0 }}
+                            animate={{ scale: 1, opacity: 1 }}
+                            exit={{ scale: 0.95, opacity: 0 }}
                             className="bg-[#121212] border border-white/10 p-8 rounded-2xl w-full max-w-md relative shadow-2xl"
                         >
                             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-blue-500" />

@@ -6,19 +6,39 @@ import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import GlobalHeader from "@/components/GlobalHeader";
+import { toast } from "sonner";
 import {
-    Bot, Calendar, Code2, Layers, LayoutDashboard, Loader2, UserPlus, ClipboardList, CheckCircle2, RotateCcw,
+    Bot, Calendar, Code2, Layers, LayoutDashboard, Loader2, UserPlus, ClipboardList, CheckCircle2, RotateCcw, Bell, Ban, Star, MessageSquarePlus, XCircle,
     Sparkles, X, Plus, RefreshCw, Trash2, Check, AlertTriangle, MessageSquare, Mail, ThumbsUp, Clock, Send, Edit2, Users, Trophy, Megaphone, Play, LogOut, UserMinus, Timer, CalendarClock, ChevronRight, Search, Filter, ExternalLink, AlertOctagon, Vote
 } from "lucide-react";
 
 // --- CONSTANTS ---
 const PRESET_SKILLS = ["React", "Python", "Node.js", "TypeScript", "Next.js", "Tailwind", "MongoDB", "Firebase", "Flutter", "Java", "C++", "Rust", "Go", "Figma", "UI/UX", "AI/ML", "Docker", "AWS", "Solidity"];
 
+const RATING_CRITERIA = [
+    { id: "technical", label: "Technical Skill", desc: "Code quality, logic, and technical contribution." },
+    { id: "communication", label: "Communication", desc: "Responsiveness, clarity, and updates." },
+    { id: "collaboration", label: "Teamwork", desc: "Helpfulness, attitude, and code reviews." },
+    { id: "reliability", label: "Reliability", desc: "Meeting deadlines and availability." },
+    { id: "problem_solving", label: "Problem Solving", desc: "Ability to overcome challenges and debug." },
+];
+
 // --- INTERFACES ---
 interface Member { id: string; username: string; avatar_url: string; email: string; role?: string; _id?: string }
 interface DeletionRequest { is_active: boolean; votes: { [key: string]: string }; }
 interface CompletionRequest { is_active: boolean; votes: { [key: string]: string }; }
 interface MemberRequest { id: string; target_user_id: string; type: "leave" | "remove"; explanation: string; is_active: boolean; votes: { [key: string]: string }; }
+
+interface Announcement {
+    id: string;
+    content: string;
+    author_id: string;
+    created_at: string;
+    vote_type?: string;
+    vote_related_id?: string;
+    is_vote_active?: boolean;
+    vote_result?: 'passed' | 'failed';
+}
 
 interface Team {
     id: string; name: string; description: string; leader_id: string;
@@ -31,6 +51,8 @@ interface Team {
     member_requests: MemberRequest[];
     status: string;
     has_liked?: boolean;
+    announcements: Announcement[];
+    rated_member_ids?: string[];
 }
 
 interface TaskItem {
@@ -45,7 +67,7 @@ interface Suggestions { add: string[]; remove: string[]; }
 interface Candidate { id: string; name: string; avatar: string; contact: string; role: string; status: string; rejected_by?: string; }
 
 interface SearchResultUser {
-    id: string; _id?: string; username: string; avatar_url: string; skills: { name: string, level: string }[] | string[]; match_score: number; has_invited?: boolean; 
+    id: string; _id?: string; username: string; avatar_url: string; skills: { name: string, level: string }[] | string[]; match_score: number; has_invited?: boolean;
 }
 
 export default function TeamDetails() {
@@ -59,7 +81,7 @@ export default function TeamDetails() {
     const [loading, setLoading] = useState(true);
     const [candidates, setCandidates] = useState<Candidate[]>([]);
     const [isRecruiting, setIsRecruiting] = useState(true);
-    
+
     // Process States
     const [deletionProcessing, setDeletionProcessing] = useState(false);
     const [completionProcessing, setCompletionProcessing] = useState(false);
@@ -68,12 +90,16 @@ export default function TeamDetails() {
     const [isGenerating, setIsGenerating] = useState(false);
     const [isSuggesting, setIsSuggesting] = useState(false);
     const [isTaskLoading, setIsTaskLoading] = useState(false);
+    const [ratingModalOpen, setRatingModalOpen] = useState(false);
+    const [ratingTarget, setRatingTarget] = useState<any>(null);
+    const [ratingValues, setRatingValues] = useState<any>({
+        technical: 5, communication: 5, collaboration: 5, reliability: 5, problem_solving: 5
+    });
+    const [ratingExplanation, setRatingExplanation] = useState("");
 
     // Interest Modal State
-    const [showInterestModal, setShowInterestModal] = useState(false);
-    const [interestMessage, setInterestMessage] = useState("");
     const [isSendingInterest, setIsSendingInterest] = useState(false);
-
+    
     // Modals & Inputs
     const [showEmailModal, setShowEmailModal] = useState(false);
     const [emailRecipient, setEmailRecipient] = useState<{ id: string, name: string } | null>(null);
@@ -84,8 +110,6 @@ export default function TeamDetails() {
     const [actionType, setActionType] = useState<"leave" | "remove" | null>(null);
     const [actionTargetId, setActionTargetId] = useState<string | null>(null);
     const [explanation, setExplanation] = useState("");
-
-    const [ratingExplanation, setRatingExplanation] = useState("");
 
     const [showExtensionModal, setShowExtensionModal] = useState(false);
     const [extensionTaskId, setExtensionTaskId] = useState<string | null>(null);
@@ -112,6 +136,12 @@ export default function TeamDetails() {
 
     // Visuals
     const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
+    //Announcements
+    const [announcementText, setAnnouncementText] = useState("");
+    const [isPostingAnnouncement, setIsPostingAnnouncement] = useState(false);
+    const [editingAnnouncementId, setEditingAnnouncementId] = useState<string | null>(null);
+    const [editContent, setEditContent] = useState("");
 
     // --- EFFECTS ---
     useEffect(() => {
@@ -146,6 +176,9 @@ export default function TeamDetails() {
             setTeam(res.data);
             setLocalSkills(res.data.needed_skills || []);
             setIsRecruiting(res.data.is_looking_for_members);
+            if (res.data.rated_member_ids) {
+                setRatedMembers(res.data.rated_member_ids);
+            }
             if (res.data.leader_id) fetchCandidates(res.data.id);
             fetchTasks();
         } catch (err) { console.error(err); } finally { setLoading(false); }
@@ -183,9 +216,9 @@ export default function TeamDetails() {
             params.append("randomize", "true");
             if (recruitSearch) params.append("search", recruitSearch);
             if (recruitSkillFilter) params.append("skills", recruitSkillFilter);
-            
+
             const res = await api.get(`/matches/users?${params.toString()}`);
-            setRecruitResults(res.data.map((u: any) => ({...u, has_invited: false})));
+            setRecruitResults(res.data.map((u: any) => ({ ...u, has_invited: false })));
         } catch (e) { console.error(e); } finally { setIsSearching(false); }
     };
 
@@ -197,7 +230,7 @@ export default function TeamDetails() {
     }
 
     const handleLikeUser = async (user: SearchResultUser) => {
-        if (user.has_invited) return; 
+        if (user.has_invited) return;
         setRecruitResults(prev => prev.map(u => u.id === user.id ? { ...u, has_invited: true } : u));
         try {
             const safeTargetId = getSafeId(user);
@@ -209,51 +242,95 @@ export default function TeamDetails() {
         }
     };
 
+    //Rating Logic
+    const openRatingModal = (member: any) => {
+        setRatingTarget(member);
+        setRatingValues({ technical: 5, communication: 5, collaboration: 5, reliability: 5, problem_solving: 5 });
+        setRatingExplanation("");
+        setRatingModalOpen(true);
+    };
+
+    const submitRating = async () => {
+        if (!ratingTarget) return;
+        setRatingProcessing(ratingTarget.id);
+
+        try {
+            await api.post(`/teams/${teamId}/rate`, {
+                target_user_id: ratingTarget.id,
+                breakdown: ratingValues,
+                explanation: ratingExplanation
+            });
+
+            setRatedMembers([...ratedMembers, ratingTarget.id]);
+            setRatingModalOpen(false);
+            alert("Rating submitted successfully!");
+        } catch (e) {
+            alert("Failed to submit rating.");
+        } finally {
+            setRatingProcessing(null);
+        }
+    };
+
+    const updateRatingValue = (criterionId: string, value: number) => {
+        setRatingValues((prev: any) => ({ ...prev, [criterionId]: value }));
+    };
+
     // --- CANDIDATE ACTIONS (Invite, Accept, Reject) ---
-    const sendInvite = async (c: Candidate) => { 
-        try { 
-            setCandidates(prev => prev.map(m => m.id === c.id ? { ...m, status: "invited" } : m)); 
-            await api.post(`/teams/${teamId}/invite`, { target_user_id: c.id }); 
-        } catch (err) { fetchCandidates(teamId); } 
+    const sendInvite = async (c: Candidate) => {
+        try {
+            setCandidates(prev => prev.map(m => m.id === c.id ? { ...m, status: "invited" } : m));
+            await api.post(`/teams/${teamId}/invite`, { target_user_id: c.id });
+        } catch (err) { fetchCandidates(teamId); }
     }
-    const acceptRequest = async (c: Candidate) => { 
-        try { 
-            await api.post(`/teams/${teamId}/members`, { target_user_id: c.id }); 
-            fetchTeamData(); fetchCandidates(teamId); 
-        } catch (err) { } 
+    const acceptRequest = async (c: Candidate) => {
+        try {
+            await api.post(`/teams/${teamId}/members`, { target_user_id: c.id });
+            fetchTeamData(); fetchCandidates(teamId);
+        } catch (err) { }
     }
-    const rejectRequest = async (c: Candidate) => { 
-        if (!confirm("Reject?")) return; 
-        try { 
-            await api.post(`/teams/${teamId}/reject`, { target_user_id: c.id }); 
-            fetchCandidates(teamId); 
-        } catch (err) { } 
+    const rejectRequest = async (c: Candidate) => {
+        if (!confirm("Reject?")) return;
+        try {
+            await api.post(`/teams/${teamId}/reject`, { target_user_id: c.id });
+            fetchCandidates(teamId);
+        } catch (err) { }
     }
-    const deleteCandidate = async (c: Candidate) => { 
-        if (!confirm("Remove?")) return; 
-        try { 
-            await api.delete(`/matches/delete/${teamId}/${c.id}`); 
-            fetchCandidates(teamId); 
-        } catch (err) { } 
+    const deleteCandidate = async (c: Candidate) => {
+        if (!confirm("Remove?")) return;
+        try {
+            await api.delete(`/matches/delete/${teamId}/${c.id}`);
+            fetchCandidates(teamId);
+        } catch (err) { }
     }
 
     // --- INTEREST REQUEST (User -> Project) ---
     const handleSendInterest = async () => {
+        if (team?.has_liked) return;
         setIsSendingInterest(true);
         try {
-            await api.post("/matches/swipe", {
+            const res = await api.post("/matches/swipe", {
                 target_id: teamId,
                 direction: "right",
                 type: "project",
-                related_id: teamId,
-                message: interestMessage // Sending the custom message
+                related_id: teamId
             });
-            if (team) setTeam({ ...team, has_liked: true });
-            setShowInterestModal(false);
-            alert("Request sent successfully!");
-            window.dispatchEvent(new Event("dashboardUpdate"));
-        } catch (err) {
-            alert("Failed to send request.");
+
+            if (res.data.status === 'cooldown') {
+                toast.info(res.data.message || "You already liked this recently. Cooldown is active.");
+                // Optimistically update UI even on cooldown if desired, or just alert user
+                if (team) setTeam({ ...team, has_liked: true });
+            } else {
+                if (team) setTeam({ ...team, has_liked: true });
+                if (res.data.is_match) {
+                    toast.success("It's a Match! 🎉");
+                } else {
+                    toast.success("Interest sent!");
+                }
+                window.dispatchEvent(new Event("dashboardUpdate"));
+            }
+        } catch (err: any) {
+            const msg = err.response?.data?.message || "Failed to send request.";
+            toast.error(msg);
         } finally {
             setIsSendingInterest(false);
         }
@@ -280,7 +357,10 @@ export default function TeamDetails() {
                 fetchTeamData();
             }
             setShowExplainModal(false);
-        } catch (e) { alert("Action failed"); }
+        } catch (e: any) {
+            const msg = e.response?.data?.detail || "Action failed";
+            alert(msg);
+        }
     };
 
     const handleVoteRequest = async (reqId: string, decision: 'approve' | 'reject') => { try { await api.post(`/teams/${teamId}/member-request/${reqId}/vote`, { decision }); fetchTeamData(); } catch (e) { } };
@@ -348,12 +428,38 @@ export default function TeamDetails() {
         } catch (e) { } finally { setCompletionProcessing(false); }
     };
 
+    const getVoteStats = (ann: Announcement) => {
+        let req: any = null;
+        let required = 0;
+        const totalMembers = team?.members.length || 0;
+
+        if (ann.vote_type === 'deletion') {
+            req = team?.deletion_request;
+            required = Math.ceil(totalMembers * 0.7);
+        } else if (ann.vote_type === 'completion') {
+            req = team?.completion_request;
+            required = Math.ceil(totalMembers * 0.7);
+        } else if (ann.vote_type === 'remove_member' || ann.vote_type === 'leave') {
+            req = team?.member_requests.find(r => r.id === ann.vote_related_id);
+            required = Math.ceil((totalMembers - 1) * 0.7);
+        }
+
+        if (!req) return null;
+
+        const votes = req.votes || {};
+        const approveCount = Object.values(votes).filter(v => v === 'approve').length;
+        const rejectCount = Object.values(votes).filter(v => v === 'reject').length;
+        const myVote = votes[currentUserId];
+
+        return { req, approveCount, rejectCount, required, myVote };
+    };
+
     const handleRateMember = async (targetId: string, score: number) => {
         setRatingProcessing(targetId);
         try {
             await api.post(`/teams/${teamId}/rate`, { target_user_id: targetId, score, explanation: ratingExplanation });
             setRatedMembers([...ratedMembers, targetId]);
-            setRatingExplanation(""); 
+            setRatingExplanation("");
             alert("Rating submitted!");
         } catch (e) { } finally { setRatingProcessing(null); }
     }
@@ -387,6 +493,46 @@ export default function TeamDetails() {
         try { await api.post(`/teams/${teamId}/roadmap`, {}); fetchTeamData(); } catch (err: any) { const msg = err.response?.data?.detail || "Roadmap failed."; alert(msg); } finally { setIsGenerating(false); }
     };
 
+    // Announcements
+    const handlePostAnnouncement = async () => {
+        if (!announcementText.trim()) return;
+        setIsPostingAnnouncement(true);
+        try {
+            await api.post(`/teams/${teamId}/announcements`, { content: announcementText });
+            setAnnouncementText("");
+            fetchTeamData(); // Refresh to show new post
+        } catch (e) {
+            toast.error("Failed to post announcement");
+        } finally {
+            setIsPostingAnnouncement(false);
+        }
+    };
+
+    const handleDeleteAnnouncement = async (announcementId: string) => {
+        if (!confirm("Delete this announcement?")) return;
+        try {
+            await api.delete(`/teams/${teamId}/announcements/${announcementId}`);
+            fetchTeamData();
+        } catch (e) {
+            toast.error("Failed to delete");
+        }
+    };
+
+    const handleUpdateAnnouncement = async () => {
+        if (!editContent.trim() || !editingAnnouncementId) return;
+        try {
+            await api.put(`/teams/${teamId}/announcements/${editingAnnouncementId}`, {
+                content: editContent
+            });
+            setEditingAnnouncementId(null);
+            setEditContent("");
+            fetchTeamData();
+            toast.success("Announcement updated");
+        } catch (e) {
+            toast.error("Failed to update");
+        }
+    };
+
     if (loading || !team) return <div className="flex h-screen items-center justify-center bg-transparent text-white"><Loader2 className="w-10 h-10 animate-spin text-purple-600" /></div>;
 
     // --- CHECK FOR ACTIVE VOTES ---
@@ -394,7 +540,7 @@ export default function TeamDetails() {
 
     return (
         <div className="min-h-screen w-full bg-transparent text-zinc-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
-            
+
             {/* Background Effects */}
             <div className="pointer-events-none fixed inset-0 z-30 transition-opacity duration-300" style={{ background: `radial-gradient(800px at ${mousePosition.x}px ${mousePosition.y}px, rgba(168, 85, 247, 0.1), transparent 99%)` }} />
             <div className="fixed inset-0 z-0 pointer-events-none">
@@ -403,95 +549,6 @@ export default function TeamDetails() {
             </div>
 
             <div className="relative z-40 max-w-7xl mx-auto p-4 md:p-8">
-
-                {/* --- TOP VOTING PANEL (ACTION CENTER) --- */}
-                {hasActiveVotes && (
-                    <div className="mb-12">
-                        <div className="flex items-center gap-2 mb-4 text-sm font-bold uppercase tracking-widest text-zinc-500">
-                            <AlertOctagon className="w-4 h-4 text-orange-500" />
-                            <span>Action Required</span>
-                            <div className="h-px bg-zinc-800 flex-1"></div>
-                        </div>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                            {/* Member Requests (Leave/Remove) */}
-                            {team.member_requests?.filter(r => r.is_active).map(req => {
-                                const hasVoted = req.votes[currentUserId];
-                                const approv = Object.values(req.votes).filter(v => v === 'approve').length;
-                                const needed = Math.ceil(team.members.length * 0.7);
-                                
-                                return (
-                                    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={req.id} className="bg-yellow-900/10 backdrop-blur-md border border-yellow-500/30 p-5 rounded-2xl flex flex-col justify-between gap-4 shadow-[0_0_20px_rgba(234,179,8,0.05)]">
-                                            <div className="flex items-start gap-4">
-                                                <div className="p-2.5 bg-yellow-500/20 rounded-xl text-yellow-500 shrink-0"><UserMinus className="w-5 h-5" /></div>
-                                                <div>
-                                                    <h3 className="font-bold text-yellow-100 text-sm mb-1">{req.type === "leave" ? "Member Leaving" : "Remove Member"}</h3>
-                                                    <p className="text-xs text-yellow-200/60 leading-relaxed italic">"{req.explanation}"</p>
-                                                </div>
-                                            </div>
-                                            <div className="flex items-center justify-between pt-2 border-t border-yellow-500/10">
-                                                <div className="text-[10px] text-yellow-500/50 font-mono flex items-center gap-1"><Vote className="w-3 h-3"/> {approv}/{needed} Votes</div>
-                                                {hasVoted ? <span className="text-xs font-bold text-zinc-500 bg-zinc-900/50 px-3 py-1 rounded-lg border border-zinc-800">Voted</span> : (
-                                                    <div className="flex gap-2">
-                                                        <button onClick={() => handleVoteRequest(req.id, 'approve')} className="px-3 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-500 hover:text-white rounded-lg text-xs font-bold transition">Approve</button>
-                                                        <button onClick={() => handleVoteRequest(req.id, 'reject')} className="px-3 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-500 hover:text-white rounded-lg text-xs font-bold transition">Reject</button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                    </motion.div>
-                                );
-                            })}
-
-                            {/* Deletion Request */}
-                            {team.deletion_request?.is_active && (
-                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-red-900/10 backdrop-blur-md border border-red-500/30 p-5 rounded-2xl flex flex-col justify-between gap-4 shadow-[0_0_20px_rgba(239,68,68,0.05)]">
-                                        <div className="flex items-start gap-4">
-                                            <div className="p-2.5 bg-red-500/20 rounded-xl text-red-500 shrink-0"><AlertTriangle className="w-5 h-5" /></div>
-                                            <div>
-                                                <h3 className="font-bold text-red-100 text-sm mb-1">Project Deletion</h3>
-                                                <p className="text-xs text-red-200/60 leading-relaxed">A vote to delete this project has been initiated.</p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center justify-between pt-2 border-t border-red-500/10">
-                                            <div className="text-[10px] text-red-500/50 font-mono flex items-center gap-1"><Vote className="w-3 h-3"/> Status Check</div>
-                                            {team.deletion_request.votes[currentUserId] ? (
-                                                <span className="text-xs font-bold text-zinc-500 bg-zinc-900/50 px-3 py-1 rounded-lg border border-zinc-800">Voted</span>
-                                            ) : (
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => handleVoteDelete('approve')} disabled={deletionProcessing} className="px-3 py-1.5 bg-red-500/20 text-red-400 border border-red-500/30 hover:bg-red-600 hover:text-white rounded-lg text-xs font-bold transition">Delete</button>
-                                                    <button onClick={() => handleVoteDelete('reject')} disabled={deletionProcessing} className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-bold transition">Keep</button>
-                                                </div>
-                                            )}
-                                        </div>
-                                </motion.div>
-                            )}
-
-                            {/* Completion Request */}
-                            {team.status === 'active' && team.completion_request?.is_active && (
-                                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="bg-green-900/10 backdrop-blur-md border border-green-500/30 p-5 rounded-2xl flex flex-col justify-between gap-4 shadow-[0_0_20px_rgba(34,197,94,0.05)]">
-                                        <div className="flex items-start gap-4">
-                                            <div className="p-2.5 bg-green-500/20 rounded-xl text-green-500 shrink-0"><Trophy className="w-5 h-5" /></div>
-                                            <div>
-                                                <h3 className="font-bold text-green-100 text-sm mb-1">Project Completion</h3>
-                                                <p className="text-xs text-green-200/60 leading-relaxed">Vote to mark this project as officially completed.</p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center justify-between pt-2 border-t border-green-500/10">
-                                            <div className="text-[10px] text-green-500/50 font-mono flex items-center gap-1"><Vote className="w-3 h-3"/> Final Vote</div>
-                                            {team.completion_request.votes[currentUserId] ? (
-                                                <span className="text-xs font-bold text-zinc-500 bg-zinc-900/50 px-3 py-1 rounded-lg border border-zinc-800">Voted</span>
-                                            ) : (
-                                                <div className="flex gap-2">
-                                                    <button onClick={() => handleVoteComplete('approve')} disabled={completionProcessing} className="px-3 py-1.5 bg-green-500/20 text-green-400 border border-green-500/30 hover:bg-green-600 hover:text-white rounded-lg text-xs font-bold transition">Confirm</button>
-                                                    <button onClick={() => handleVoteComplete('reject')} disabled={completionProcessing} className="px-3 py-1.5 bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-bold transition">Reject</button>
-                                                </div>
-                                            )}
-                                        </div>
-                                </motion.div>
-                            )}
-                        </div>
-                    </div>
-                )}
 
                 {/* --- HEADER --- */}
                 <header className="mb-12">
@@ -533,113 +590,18 @@ export default function TeamDetails() {
                                 </>
                             )}
                             {!isMember && (
-                                <button 
-                                    onClick={() => setShowInterestModal(true)} 
-                                    disabled={team.has_liked} 
+                                <button
+                                    onClick={handleSendInterest}
+                                    disabled={team.has_liked || isSendingInterest}
                                     className={`w-full px-6 py-4 rounded-xl font-bold transition flex items-center justify-center gap-2 ${team.has_liked ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed' : 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20'}`}
                                 >
-                                    <ThumbsUp className="w-5 h-5" /> 
+                                    {isSendingInterest ? <Loader2 className="w-5 h-5 animate-spin" /> : <ThumbsUp className="w-5 h-5" />}
                                     {team.has_liked ? "Request Sent" : "I'm Interested"}
                                 </button>
                             )}
                         </div>
                     </div>
                 </header>
-
-                {/* --- INTERESTED CANDIDATES SECTION --- */}
-                {isLeader && candidates.length > 0 && (
-                    <div className="mb-16">
-                        <h3 className="text-xl font-bold mb-6 flex items-center gap-3 text-blue-400">
-                            <UserPlus className="w-6 h-6" /> Interested Candidates
-                        </h3>
-                        
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            {candidates.map(c => (
-                                <div key={c.id} className="bg-zinc-900/50 border border-zinc-800 p-5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:border-zinc-700">
-                                    
-                                    {/* Candidate Info */}
-                                    <div className="flex items-center gap-4 w-full sm:w-auto">
-                                        <img 
-                                            src={c.avatar || "https://github.com/shadcn.png"} 
-                                            className="w-12 h-12 rounded-full object-cover border border-zinc-700" 
-                                        />
-                                        <div>
-                                            <h4 className="font-bold text-zinc-200">{c.name}</h4>
-                                            <p className="text-xs text-zinc-500 capitalize font-mono">
-                                                {c.status === 'matched' ? 'Matched via Swipe' : c.status}
-                                            </p>
-                                        </div>
-                                    </div>
-
-                                    {/* Actions */}
-                                    <div className="flex gap-2">
-                                        {/* Status: Matched (Needs Invite) */}
-                                        {c.status === "matched" && (
-                                            <>
-                                                <button 
-                                                    onClick={() => sendInvite(c)} 
-                                                    className="px-4 py-2 bg-blue-600/20 text-blue-400 rounded-lg text-xs font-bold hover:bg-blue-600 hover:text-white transition flex items-center gap-2"
-                                                >
-                                                    <Plus className="w-4 h-4" /> Invite
-                                                </button>
-                                                <button 
-                                                    onClick={() => deleteCandidate(c)} 
-                                                    className="p-2 bg-zinc-800 text-zinc-500 rounded-lg hover:text-red-400 hover:bg-zinc-700 transition"
-                                                    title="Remove Candidate"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
-                                            </>
-                                        )}
-
-                                        {/* Status: Requested (Needs Accept/Reject) */}
-                                        {c.status === "requested" && (
-                                            <>
-                                                <button 
-                                                    onClick={() => acceptRequest(c)} 
-                                                    className="px-4 py-2 bg-green-600/20 text-green-400 rounded-lg text-xs font-bold hover:bg-green-600 hover:text-white transition flex items-center gap-2"
-                                                >
-                                                    <Check className="w-4 h-4" /> Accept
-                                                </button>
-                                                <button 
-                                                    onClick={() => rejectRequest(c)} 
-                                                    className="p-2 bg-red-600/10 text-red-400 rounded-lg hover:bg-red-600 hover:text-white transition"
-                                                    title="Reject"
-                                                >
-                                                    <X className="w-4 h-4" />
-                                                </button>
-                                            </>
-                                        )}
-
-                                        {/* Status: Invited (Waiting) */}
-                                        {c.status === "invited" && (
-                                            <span className="flex items-center gap-1 text-xs font-bold text-zinc-500 bg-zinc-900 px-3 py-1 rounded-lg border border-zinc-800 cursor-default">
-                                                <Clock className="w-3 h-3" /> Invited
-                                            </span>
-                                        )}
-                                        
-                                        {/* Common Actions */}
-                                        <Link href={`/chat?targetId=${c.id}`}>
-                                            <button className="p-2 bg-zinc-800/50 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition">
-                                                <MessageSquare className="w-4 h-4" />
-                                            </button>
-                                        </Link>
-                                        
-                                        {/* Delete button for non-active states */}
-                                        {c.status !== "matched" && c.status !== "requested" && (
-                                            <button 
-                                                onClick={() => deleteCandidate(c)} 
-                                                className="p-2 bg-zinc-800/50 text-zinc-500 rounded-lg hover:text-red-400 hover:bg-zinc-800 transition"
-                                            >
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                )}
 
                 {/* --- TECH STACK & MEMBERS --- */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
@@ -687,6 +649,319 @@ export default function TeamDetails() {
                     </div>
                 </div>
 
+                {/* --- NOTICE BOARD (UI OVERHAUL) --- */}
+                {team.members.some(m => (m.id || m._id) === currentUserId) && (
+                    <div className="mb-16 relative group">
+                        <div className="absolute -inset-1 bg-gradient-to-r from-yellow-600/20 via-orange-600/10 to-purple-600/20 rounded-[2.5rem] blur-xl opacity-50 group-hover:opacity-75 transition duration-1000"></div>
+                        <div className="relative bg-[#0c0c0c] border border-white/5 rounded-[2rem] p-6 md:p-8 overflow-hidden">
+
+                            {/* Header */}
+                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-8">
+                                <div>
+                                    <h3 className="text-2xl font-black flex items-center gap-3 text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 to-orange-400">
+                                        <Megaphone className="w-6 h-6 text-yellow-500" /> Team Notice Board
+                                    </h3>
+                                    <p className="text-zinc-500 text-sm mt-1 ml-1">Updates, votes, and important announcements.</p>
+                                </div>
+                            </div>
+
+                            {/* Post Input (Leader Only) */}
+                            {isLeader && (
+                                <div className="mb-10 relative group/input">
+                                    <div className="absolute inset-0 bg-gradient-to-r from-yellow-500/10 to-transparent rounded-xl blur-sm opacity-0 group-hover/input:opacity-100 transition"></div>
+                                    <div className="relative flex gap-3 p-1.5 bg-zinc-900/50 border border-zinc-800 rounded-2xl focus-within:border-yellow-500/50 focus-within:bg-zinc-900 transition-all shadow-lg">
+                                        <input
+                                            id="announcement-input"
+                                            className="flex-1 bg-transparent px-4 text-sm text-zinc-200 outline-none placeholder:text-zinc-600"
+                                            placeholder="Broadcast an announcement..."
+                                            value={announcementText}
+                                            onChange={(e) => setAnnouncementText(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && handlePostAnnouncement()}
+                                        />
+                                        <button onClick={handlePostAnnouncement} disabled={isPostingAnnouncement || !announcementText.trim()} className="bg-zinc-800 hover:bg-yellow-500 hover:text-black text-zinc-400 p-3 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed">
+                                            {isPostingAnnouncement ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Feed */}
+                            <div className="space-y-4 max-h-[600px] overflow-y-auto custom-scrollbar pr-2 -mr-2 pl-1 pt-1">
+                                {(!team.announcements || team.announcements.length === 0) ? (
+                                    <div className="flex flex-col items-center justify-center py-12 text-zinc-600">
+                                        <div className="w-16 h-16 bg-zinc-900 rounded-full flex items-center justify-center mb-4 border border-zinc-800"><Sparkles className="w-6 h-6 text-zinc-700" /></div>
+                                        <p className="font-medium">No updates yet.</p>
+                                    </div>
+                                ) : (
+                                    [...team.announcements].reverse().map((ann) => {
+                                        const isVote = !!ann.vote_type;
+                                        const author = team.members.find(m => (m.id || m._id) === ann.author_id);
+                                        const isEditing = editingAnnouncementId === ann.id;
+
+                                        // --- CONTENT PARSING LOGIC ---
+                                        // We extract the "Target" and "Reason" from the raw string if it matches the pattern
+                                        const removeRegex = /Vote to remove \*\*(.*?)\*\*\.\nReason: _(.*?)_/;
+                                        const leaveRegex = /\*\*(.*?)\*\* wants to leave the team\.\nReason: _(.*?)_/;
+
+                                        let renderTitle = "Announcement";
+                                        let renderTarget = "";
+                                        let renderReason = "";
+                                        let cleanContent = ann.content.replace(/(\n\n)?(❌|✅|⚠️|🏆|🚨).*(VOTE FAILED|VOTE PASSED|VOTE EXPIRED).*/g, "").trim();
+
+                                        if (ann.vote_type === 'remove_member') {
+                                            renderTitle = "Vote to Remove Member";
+                                            const match = cleanContent.match(removeRegex);
+                                            if (match) { renderTarget = match[1]; renderReason = match[2]; }
+                                        } else if (ann.vote_type === 'leave') {
+                                            renderTitle = "Member Leaving Request";
+                                            const match = cleanContent.match(leaveRegex);
+                                            if (match) { renderTarget = match[1]; renderReason = match[2]; }
+                                        } else if (ann.vote_type === 'deletion') {
+                                            renderTitle = "Project Deletion Vote";
+                                            renderReason = "Leader requested to delete the project.";
+                                        } else if (ann.vote_type === 'completion') {
+                                            renderTitle = "Project Completion Vote";
+                                            renderReason = "Leader wants to mark project as complete.";
+                                        }
+
+                                        // Vote Stats & Math Fix
+                                        let voteData = ann.is_vote_active ? getVoteStats(ann) : null;
+                                        if (voteData && (ann.vote_type === 'remove_member' || ann.vote_type === 'leave')) {
+                                            voteData.required = Math.max(1, (team.members.length || 0) - 1);
+                                        }
+                                        const votePassed = ann.vote_result === 'passed';
+                                        const voteFailed = ann.vote_result === 'failed';
+
+                                        return (
+                                            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={ann.id} className={`relative overflow-hidden p-6 rounded-3xl border transition-all hover:shadow-xl group/card ${ann.is_vote_active ? 'bg-gradient-to-br from-yellow-900/10 to-zinc-900/50 border-yellow-500/20 shadow-[0_4px_20px_-10px_rgba(234,179,8,0.2)]' : 'bg-zinc-900/40 border-white/5 hover:bg-zinc-900/60'}`}>
+                                                {ann.is_vote_active && <div className="absolute left-0 top-0 bottom-0 w-1 bg-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.5)]"></div>}
+
+                                                <div className="flex gap-4">
+                                                    <img src={author?.avatar_url || "https://github.com/shadcn.png"} className="w-10 h-10 rounded-full border border-zinc-700 object-cover mt-1 shrink-0" />
+
+                                                    <div className="flex-1 min-w-0">
+                                                        {/* Header Badges */}
+                                                        <div className="flex flex-wrap items-center gap-2 mb-3">
+                                                            <span className="font-bold text-zinc-200">{author?.username || "Unknown"}</span>
+                                                            <span className="text-zinc-600 text-xs">•</span>
+                                                            <span className="text-xs text-zinc-500">{new Date(ann.created_at).toLocaleString()}</span>
+
+                                                            {ann.is_vote_active ? (
+                                                                <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border bg-yellow-500 text-black border-yellow-500 shadow-[0_0_10px_rgba(234,179,8,0.4)]">Active Vote</span>
+                                                            ) : votePassed ? (
+                                                                <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border bg-green-500 text-black border-green-500 shadow-[0_0_10px_rgba(34,197,94,0.4)]">Passed</span>
+                                                            ) : voteFailed ? (
+                                                                <span className="ml-auto text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded border bg-red-500 text-white border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]">Failed</span>
+                                                            ) : !isVote ? (
+                                                                <span className="ml-auto text-[10px] font-bold uppercase tracking-wider text-zinc-600 bg-zinc-800/50 px-2 py-1 rounded border border-zinc-800">Announcement</span>
+                                                            ) : null}
+
+                                                            {/* Leader Controls (Edit/Delete) - ONLY FOR ANNOUNCEMENTS, NOT VOTES */}
+                                                            {isLeader && !isEditing && !isVote && (
+                                                                <div className="flex items-center gap-1 opacity-0 group-hover/card:opacity-100 transition-opacity ml-2">
+                                                                    <button
+                                                                        onClick={() => { setEditingAnnouncementId(ann.id); setEditContent(cleanContent); }}
+                                                                        className="p-1.5 text-zinc-500 hover:text-blue-400 hover:bg-blue-500/10 rounded-lg transition"
+                                                                        title="Edit"
+                                                                    >
+                                                                        <Edit2 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => handleDeleteAnnouncement(ann.id)}
+                                                                        className="p-1.5 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition"
+                                                                        title="Delete"
+                                                                    >
+                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
+
+                                                        {/* CONTENT DISPLAY */}
+                                                        {isEditing ? (
+                                                            <div className="mt-2 animate-in fade-in zoom-in-95 duration-200">
+                                                                <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} className="w-full bg-black/50 border border-purple-500/50 rounded-xl p-3 text-sm text-zinc-200 outline-none focus:ring-1 focus:ring-purple-500/50 resize-none min-h-[80px]" autoFocus />
+                                                                <div className="flex gap-2 justify-end mt-2">
+                                                                    <button onClick={() => setEditingAnnouncementId(null)} className="px-3 py-1.5 text-xs font-bold text-zinc-400 hover:text-white bg-zinc-800 rounded-lg hover:bg-zinc-700">Cancel</button>
+                                                                    <button onClick={handleUpdateAnnouncement} className="px-3 py-1.5 text-xs font-bold text-white bg-purple-600 rounded-lg hover:bg-purple-500 shadow-lg shadow-purple-900/20">Save</button>
+                                                                </div>
+                                                            </div>
+                                                        ) : isVote ? (
+                                                            // --- CUSTOM VOTE CARD UI ---
+                                                            <div className="bg-zinc-950/50 rounded-xl p-4 border border-zinc-800/50">
+                                                                <div className="flex items-start gap-3 mb-3">
+                                                                    <div className={`mt-0.5 p-2 rounded-lg ${ann.vote_type === 'remove_member' ? 'bg-red-500/10 text-red-500' : 'bg-blue-500/10 text-blue-500'}`}>
+                                                                        {ann.vote_type === 'remove_member' ? <UserMinus className="w-5 h-5" /> : <AlertOctagon className="w-5 h-5" />}
+                                                                    </div>
+                                                                    <div>
+                                                                        <h4 className="font-bold text-zinc-200 text-sm">{renderTitle}</h4>
+                                                                        {renderTarget && <p className="text-xs text-zinc-400 mt-0.5">Target: <span className="text-white font-bold">{renderTarget}</span></p>}
+                                                                    </div>
+                                                                </div>
+                                                                {renderReason && (
+                                                                    <div className="bg-black/40 rounded-lg p-3 text-xs text-zinc-400 italic border-l-2 border-zinc-700">
+                                                                        "{renderReason}"
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        ) : (
+                                                            // --- STANDARD ANNOUNCEMENT ---
+                                                            <p className="text-zinc-300 text-sm leading-relaxed whitespace-pre-wrap">{cleanContent}</p>
+                                                        )}
+
+                                                        {/* INTERACTIVE VOTING AREA */}
+                                                        {ann.is_vote_active && voteData && voteData.req && (
+                                                            <div className="mt-4 pt-4 border-t border-white/5">
+                                                                {/* Progress Stats */}
+                                                                <div className="flex justify-between items-end mb-2">
+                                                                    <span className="text-xs font-bold text-zinc-400 uppercase tracking-wide">Consensus Progress</span>
+                                                                    <span className="text-[10px] text-zinc-500 font-medium flex items-center gap-1">
+                                                                        <Users className="w-3 h-3" /> {voteData.approveCount + voteData.rejectCount} voted so far
+                                                                    </span>
+                                                                    <div className="text-right">
+                                                                        {/* Show Actual Count vs Required */}
+                                                                        <span className="text-lg font-black text-white">{voteData.approveCount}</span>
+                                                                        <span className="text-xs text-zinc-600">/{voteData.required} needed</span>
+                                                                    </div>
+                                                                </div>
+
+                                                                {/* Progress Bar Visual */}
+                                                                <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden mb-4">
+                                                                    <motion.div
+                                                                        initial={{ width: 0 }}
+                                                                        // Ensure width is calculated safely
+                                                                        animate={{ width: `${voteData.required > 0 ? Math.min((voteData.approveCount / voteData.required) * 100, 100) : 0}%` }}
+                                                                        className={`h-full ${voteData.approveCount >= voteData.required ? 'bg-green-500' : 'bg-yellow-500'} relative`}
+                                                                    >
+                                                                        <div className="absolute inset-0 bg-white/20 animate-[shimmer_2s_infinite]"></div>
+                                                                    </motion.div>
+                                                                </div>
+
+                                                                {voteData.myVote ? (
+                                                                    <div className="flex items-center justify-center gap-2 p-2 bg-zinc-800/50 rounded-lg border border-zinc-700/50 text-xs text-zinc-400">
+                                                                        You voted: <span className={`font-black uppercase ${voteData.myVote === 'approve' ? 'text-green-400' : 'text-red-400'}`}>{voteData.myVote}</span>
+                                                                    </div>
+                                                                ) : (
+                                                                    (ann.vote_related_id && (ann.vote_type === 'remove_member' || ann.vote_type === 'leave') && voteData.req.target_user_id === currentUserId) ? (
+                                                                        <div className="w-full py-2 bg-red-500/5 border border-red-500/10 rounded-lg text-center text-xs font-bold text-red-400 flex items-center justify-center gap-2">
+                                                                            <Ban className="w-3 h-3" /> Cannot vote on self
+                                                                        </div>
+                                                                    ) : (
+                                                                        <div className="grid grid-cols-2 gap-3">
+                                                                            <button onClick={() => { if (ann.vote_type === 'deletion') handleVoteDelete('approve'); else if (ann.vote_type === 'completion') handleVoteComplete('approve'); else if (ann.vote_related_id) handleVoteRequest(ann.vote_related_id, 'approve'); }} className="bg-zinc-800 hover:bg-green-500/20 border border-zinc-700 hover:border-green-500/50 rounded-lg py-2 transition-all flex items-center justify-center gap-2 text-xs font-bold text-zinc-300 hover:text-green-400"><Check className="w-3 h-3" /> Approve</button>
+                                                                            <button onClick={() => { if (ann.vote_type === 'deletion') handleVoteDelete('reject'); else if (ann.vote_type === 'completion') handleVoteComplete('reject'); else if (ann.vote_related_id) handleVoteRequest(ann.vote_related_id, 'reject'); }} className="bg-zinc-800 hover:bg-red-500/20 border border-zinc-700 hover:border-red-500/50 rounded-lg py-2 transition-all flex items-center justify-center gap-2 text-xs font-bold text-zinc-300 hover:text-red-400"><X className="w-3 h-3" /> Reject</button>
+                                                                        </div>
+                                                                    )
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </motion.div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* --- INTERESTED CANDIDATES SECTION --- */}
+                {isLeader && candidates.length > 0 && (
+                    <div className="mb-16">
+                        <h3 className="text-xl font-bold mb-6 flex items-center gap-3 text-blue-400">
+                            <UserPlus className="w-6 h-6" /> Interested Candidates
+                        </h3>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            {candidates.map(c => (
+                                <div key={c.id} className="bg-zinc-900/50 border border-zinc-800 p-5 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-4 transition-all hover:border-zinc-700">
+
+                                    {/* Candidate Info */}
+                                    <div className="flex items-center gap-4 w-full sm:w-auto">
+                                        <img
+                                            src={c.avatar || "https://github.com/shadcn.png"}
+                                            className="w-12 h-12 rounded-full object-cover border border-zinc-700"
+                                        />
+                                        <div>
+                                            <h4 className="font-bold text-zinc-200">{c.name}</h4>
+                                            <p className="text-xs text-zinc-500 capitalize font-mono">
+                                                {c.status === 'matched' ? 'Matched via Swipe' : c.status}
+                                            </p>
+                                        </div>
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div className="flex gap-2">
+                                        {/* Status: Matched (Needs Invite) */}
+                                        {c.status === "matched" && (
+                                            <>
+                                                <button
+                                                    onClick={() => sendInvite(c)}
+                                                    className="px-4 py-2 bg-blue-600/20 text-blue-400 rounded-lg text-xs font-bold hover:bg-blue-600 hover:text-white transition flex items-center gap-2"
+                                                >
+                                                    <Plus className="w-4 h-4" /> Invite
+                                                </button>
+                                                <button
+                                                    onClick={() => deleteCandidate(c)}
+                                                    className="p-2 bg-zinc-800 text-zinc-500 rounded-lg hover:text-red-400 hover:bg-zinc-700 transition"
+                                                    title="Remove Candidate"
+                                                >
+                                                    <Trash2 className="w-4 h-4" />
+                                                </button>
+                                            </>
+                                        )}
+
+                                        {/* Status: Requested (Needs Accept/Reject) */}
+                                        {c.status === "requested" && (
+                                            <>
+                                                <button
+                                                    onClick={() => acceptRequest(c)}
+                                                    className="px-4 py-2 bg-green-600/20 text-green-400 rounded-lg text-xs font-bold hover:bg-green-600 hover:text-white transition flex items-center gap-2"
+                                                >
+                                                    <Check className="w-4 h-4" /> Accept
+                                                </button>
+                                                <button
+                                                    onClick={() => rejectRequest(c)}
+                                                    className="p-2 bg-red-600/10 text-red-400 rounded-lg hover:bg-red-600 hover:text-white transition"
+                                                    title="Reject"
+                                                >
+                                                    <X className="w-4 h-4" />
+                                                </button>
+                                            </>
+                                        )}
+
+                                        {/* Status: Invited (Waiting) */}
+                                        {c.status === "invited" && (
+                                            <span className="flex items-center gap-1 text-xs font-bold text-zinc-500 bg-zinc-900 px-3 py-1 rounded-lg border border-zinc-800 cursor-default">
+                                                <Clock className="w-3 h-3" /> Invited
+                                            </span>
+                                        )}
+
+                                        {/* Common Actions */}
+                                        <Link href={`/chat?targetId=${c.id}`}>
+                                            <button className="p-2 bg-zinc-800/50 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition">
+                                                <MessageSquare className="w-4 h-4" />
+                                            </button>
+                                        </Link>
+
+                                        {/* Delete button for non-active states */}
+                                        {c.status !== "matched" && c.status !== "requested" && (
+                                            <button
+                                                onClick={() => deleteCandidate(c)}
+                                                className="p-2 bg-zinc-800/50 text-zinc-500 rounded-lg hover:text-red-400 hover:bg-zinc-800 transition"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
+
+
                 {/* --- TASKS --- */}
                 {team.status !== 'planning' && team.status !== 'completed' && (
                     <div className="mb-20">
@@ -721,7 +996,7 @@ export default function TeamDetails() {
                                                 else if (task.status === 'review') style = { container: "border-green-500/50 bg-green-900/10", iconBox: "bg-green-500/20 text-green-400", text: "text-green-100", metaText: "text-green-400/60", icon: <CheckCircle2 className="w-5 h-5" /> };
                                                 else if (task.is_overdue) style = { container: "border-red-600/60 bg-red-900/20 shadow-[0_0_15px_rgba(220,38,38,0.15)]", iconBox: "bg-red-600/20 text-red-500", text: "text-red-100", metaText: "text-red-400", icon: <AlertTriangle className="w-5 h-5" /> };
                                                 else if (task.was_extended) style = { container: "border-purple-500/50 bg-purple-900/10", iconBox: "bg-purple-500/20 text-purple-400", text: "text-purple-100", metaText: "text-purple-400/60", icon: <CalendarClock className="w-5 h-5" /> };
-                                                
+
                                                 return (
                                                     <div key={task.id} className={`border p-4 rounded-xl flex flex-col md:flex-row items-center justify-between gap-4 transition-all hover:scale-[1.01] ${style.container}`}>
                                                         <div className="flex items-start gap-4 flex-1"><div className={`mt-1 p-2 rounded-full ${style.iconBox}`}>{style.icon}</div><div><h4 className={`font-bold ${style.text}`}>{task.description}</h4><div className={`flex flex-wrap gap-4 mt-1 text-xs font-medium ${style.metaText}`}><span className={`flex items-center gap-1 ${task.is_overdue ? 'font-bold' : ''}`}><Calendar className="w-3 h-3" /> {new Date(task.deadline).toLocaleString()} {task.is_overdue && " (LATE)"}</span>{task.status === 'review' && !isMyTask && <span className="uppercase font-bold tracking-wider">Review Needed</span>}</div></div></div>
@@ -762,12 +1037,15 @@ export default function TeamDetails() {
                                     <div className="absolute -left-[27px] top-1 w-5 h-5 bg-black border-4 border-purple-500 rounded-full shadow-[0_0_15px_rgba(168,85,247,0.4)] z-10"></div>
                                     <div className="flex items-baseline gap-4 mb-4"><span className="text-purple-400 font-bold font-mono text-sm tracking-wider uppercase">Week {phase.week}</span><h3 className="text-xl font-semibold text-white">{phase.goal}</h3></div>
                                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {phase.tasks.map((task: any, j: number) => (
+                                        {phase.tasks?.map((task: any, j: number) => (
                                             <div key={j} className="bg-zinc-900/60 backdrop-blur-sm border border-white/5 p-5 rounded-xl flex gap-4 hover:border-white/10 transition group">
                                                 <div className="mt-1 opacity-50 group-hover:opacity-100 transition-opacity">{task.role.toLowerCase().includes('front') ? <LayoutDashboard className="w-5 h-5 text-blue-400" /> : task.role.toLowerCase().includes('back') ? <Code2 className="w-5 h-5 text-green-400" /> : <Layers className="w-5 h-5 text-orange-400" />}</div>
                                                 <div><span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">{task.role}</span><p className="text-zinc-300 text-sm leading-relaxed">{task.task}</p></div>
                                             </div>
                                         ))}
+                                        {(!phase.tasks || phase.tasks.length === 0) && (
+                                            <p className="text-zinc-500 text-sm italic col-span-2">No tasks defined for this phase.</p>
+                                        )}
                                     </div>
                                 </motion.div>
                             ))}
@@ -775,23 +1053,125 @@ export default function TeamDetails() {
                     )}
                 </div>
 
-                {/* --- RATING --- */}
                 {team.status === 'completed' && (
-                    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-gradient-to-br from-yellow-900/10 via-zinc-900 to-purple-900/10 border border-yellow-500/20 p-10 rounded-[3rem] text-center shadow-2xl relative overflow-hidden">
+                    <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} className="bg-gradient-to-br from-yellow-900/10 via-zinc-900 to-purple-900/10 border border-yellow-500/20 p-10 rounded-[3rem] text-center shadow-2xl relative overflow-hidden mb-20">
                         <div className="absolute top-0 left-1/2 -translate-x-1/2 w-full h-1 bg-gradient-to-r from-transparent via-yellow-500/50 to-transparent"></div>
-                        <div className="inline-flex p-5 bg-yellow-500/10 rounded-full mb-6 border border-yellow-500/20 shadow-[0_0_30px_rgba(234,179,8,0.15)]"><Trophy className="w-12 h-12 text-yellow-400" /></div>
+                        <div className="inline-flex p-5 bg-yellow-500/10 rounded-full mb-6 border border-yellow-500/20 shadow-[0_0_30px_rgba(234,179,8,0.15)]">
+                            <Trophy className="w-12 h-12 text-yellow-400" />
+                        </div>
                         <h2 className="text-4xl font-black text-white mb-2">Mission Accomplished!</h2>
-                        <p className="text-zinc-400 max-w-xl mx-auto mb-10 text-lg">The project is officially complete. Please rate your experience.</p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-left max-w-4xl mx-auto">
+                        <p className="text-zinc-400 max-w-xl mx-auto mb-10 text-lg">The project is officially complete. Please evaluate your teammates.</p>
+
+                        {/* Member Cards Grid */}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
                             {team.members.filter(m => m.id !== currentUserId).map(m => (
-                                <div key={m.id} className="bg-black/40 border border-zinc-800 p-6 rounded-2xl flex flex-col gap-4">
-                                    <div className="flex items-center gap-4"><img src={m.avatar_url || "https://github.com/shadcn.png"} className="w-12 h-12 rounded-full border border-zinc-700" /><div><span className="font-bold text-lg block text-zinc-200">{m.username}</span><span className="text-xs text-zinc-500 font-mono">{m.role || "Collaborator"}</span></div>{ratedMembers.includes(m.id) && <span className="ml-auto text-green-400 text-xs font-bold bg-green-900/20 px-3 py-1 rounded-full border border-green-500/20 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" /> Rated</span>}</div>
-                                    {!ratedMembers.includes(m.id) && (<div className="space-y-4 animate-in fade-in slide-in-from-top-2"><textarea className="w-full bg-zinc-900 border border-zinc-700 rounded-xl p-3 text-sm focus:border-yellow-500/50 outline-none resize-none h-24 text-zinc-300 placeholder:text-zinc-600" placeholder={`How was working with ${m.username}?`} value={ratingExplanation} onChange={e => setRatingExplanation(e.target.value)} /><div><span className="text-[10px] uppercase text-zinc-500 font-bold mb-2 block">Trust Score</span><div className="flex gap-1">{[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(s => (<button key={s} onClick={() => handleRateMember(m.id, s)} disabled={ratingProcessing === m.id} className={`flex-1 h-8 rounded text-[10px] font-bold transition-all hover:-translate-y-1 ${s >= 8 ? 'bg-green-500/20 text-green-400 hover:bg-green-500 hover:text-white' : s >= 5 ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500 hover:text-white' : 'bg-red-500/20 text-red-400 hover:bg-red-500 hover:text-white'}`}>{s}</button>))}</div></div></div>)}
+                                <div key={m.id} className="bg-black/40 border border-zinc-800 p-6 rounded-3xl flex flex-col items-center gap-4 hover:border-zinc-700 transition group">
+                                    <img src={m.avatar_url || "https://github.com/shadcn.png"} className="w-20 h-20 rounded-full border-2 border-zinc-700 shadow-xl group-hover:scale-105 transition-transform" />
+                                    <div className="text-center">
+                                        <h4 className="font-bold text-xl text-zinc-200">{m.username}</h4>
+                                        <p className="text-xs text-zinc-500 font-mono mt-1">{m.role || "Team Member"}</p>
+                                    </div>
+
+                                    {ratedMembers.includes(m.id) ? (
+                                        <div className="mt-4 px-6 py-3 bg-green-500/10 text-green-400 border border-green-500/20 rounded-xl font-bold text-sm flex items-center gap-2 cursor-default">
+                                            <CheckCircle2 className="w-4 h-4" /> Rated
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => openRatingModal(m)}
+                                            className="mt-4 w-full py-3 bg-white text-black rounded-xl font-bold text-sm hover:bg-zinc-200 transition active:scale-95 shadow-lg shadow-white/5"
+                                        >
+                                            Rate Performance
+                                        </button>
+                                    )}
                                 </div>
                             ))}
                         </div>
                     </motion.div>
                 )}
+
+                {/* --- RATING SURVEY MODAL --- */}
+                <AnimatePresence>
+                    {ratingModalOpen && ratingTarget && (
+                        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-center justify-center z-50 p-4">
+                            <motion.div
+                                initial={{ scale: 0.9, opacity: 0 }}
+                                animate={{ scale: 1, opacity: 1 }}
+                                exit={{ scale: 0.9, opacity: 0 }}
+                                className="bg-[#111] border border-zinc-800 w-full max-w-2xl rounded-[2.5rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+                            >
+                                {/* Modal Header */}
+                                <div className="p-8 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
+                                    <div>
+                                        <h2 className="text-2xl font-black text-white flex items-center gap-3">
+                                            Rate <span className="text-purple-400">{ratingTarget.username}</span>
+                                        </h2>
+                                        <p className="text-zinc-500 text-sm mt-1">Please provide honest feedback on the following criteria.</p>
+                                    </div>
+                                    <button onClick={() => setRatingModalOpen(false)} className="p-2 hover:bg-zinc-800 rounded-full transition">
+                                        <XCircle className="w-8 h-8 text-zinc-500 hover:text-white" />
+                                    </button>
+                                </div>
+
+                                {/* Survey Questions */}
+                                <div className="flex-1 overflow-y-auto p-8 space-y-8 custom-scrollbar">
+                                    {RATING_CRITERIA.map((criterion) => (
+                                        <div key={criterion.id} className="space-y-3">
+                                            <div className="flex justify-between items-end">
+                                                <label className="text-sm font-bold text-zinc-200 flex items-center gap-2">
+                                                    {criterion.label}
+                                                    <span className="text-xs font-normal text-zinc-500 ml-2 hidden sm:inline-block">- {criterion.desc}</span>
+                                                </label>
+                                                <span className={`text-sm font-black w-8 text-right ${ratingValues[criterion.id] >= 8 ? 'text-green-400' : ratingValues[criterion.id] >= 5 ? 'text-yellow-400' : 'text-red-400'}`}>
+                                                    {ratingValues[criterion.id]}
+                                                </span>
+                                            </div>
+                                            <input
+                                                type="range"
+                                                min="1"
+                                                max="10"
+                                                value={ratingValues[criterion.id]}
+                                                onChange={(e) => updateRatingValue(criterion.id, parseInt(e.target.value))}
+                                                className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-purple-500"
+                                            />
+                                            <div className="flex justify-between text-[10px] text-zinc-600 font-bold uppercase tracking-wider">
+                                                <span>Needs Improvement</span>
+                                                <span>Excellent</span>
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    <div className="pt-4 border-t border-zinc-800">
+                                        <label className="text-sm font-bold text-zinc-200 mb-3 block flex items-center gap-2">
+                                            <MessageSquarePlus className="w-4 h-4 text-zinc-500" /> Additional Comments (Optional)
+                                        </label>
+                                        <textarea
+                                            className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-sm text-zinc-200 outline-none focus:border-purple-500 transition resize-none h-24 placeholder:text-zinc-600"
+                                            placeholder={`Share specifics about ${ratingTarget.username}'s contribution...`}
+                                            value={ratingExplanation}
+                                            onChange={(e) => setRatingExplanation(e.target.value)}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Footer */}
+                                <div className="p-6 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-3">
+                                    <button onClick={() => setRatingModalOpen(false)} className="px-6 py-3 rounded-xl font-bold text-sm text-zinc-400 hover:text-white hover:bg-zinc-800 transition">
+                                        Cancel
+                                    </button>
+                                    <button
+                                        onClick={submitRating}
+                                        disabled={ratingProcessing === ratingTarget.id}
+                                        className="px-8 py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-xl font-bold text-sm shadow-lg shadow-purple-900/20 transition active:scale-95 flex items-center gap-2"
+                                    >
+                                        {ratingProcessing === ratingTarget.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Star className="w-4 h-4 fill-current" />}
+                                        Submit Rating
+                                    </button>
+                                </div>
+                            </motion.div>
+                        </div>
+                    )}
+                </AnimatePresence>
             </div>
 
             {/* --- MODALS --- */}
@@ -836,53 +1216,12 @@ export default function TeamDetails() {
 
                 {/* Email Modal */}
                 {showEmailModal && emailRecipient && (<div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4"><motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-[#111] border border-zinc-800 p-8 rounded-3xl w-full max-w-md shadow-2xl"><div className="flex justify-between items-center mb-6"><h2 className="text-xl font-bold flex items-center gap-2 text-white"><Mail className="w-5 h-5 text-purple-500" /> Send Message</h2><button onClick={() => setShowEmailModal(false)}><X className="text-zinc-500 hover:text-white transition" /></button></div><div className="space-y-4"><div className="bg-zinc-900 p-3 rounded-xl text-sm text-zinc-400 border border-zinc-800">To: <span className="text-white font-bold">{emailRecipient.name}</span></div><input className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 outline-none focus:border-purple-500 transition text-white" placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} /><textarea className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 h-32 outline-none focus:border-purple-500 resize-none transition text-white" placeholder="Type your message..." value={emailBody} onChange={e => setEmailBody(e.target.value)} /><button onClick={handleSendEmail} className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-4 rounded-xl flex items-center justify-center gap-2 transition active:scale-95 shadow-lg shadow-purple-900/20"><Send className="w-4 h-4" /> Send</button></div></motion.div></div>)}
-                
+
                 {/* Explain Modal */}
                 {showExplainModal && (<div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4"><motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#111] border border-white/10 p-10 rounded-[2.5rem] w-full max-w-md shadow-2xl"><h2 className="text-2xl font-black mb-4 text-white">{actionType === "leave" ? "Confirm Departure" : "Confirm Removal"}</h2><textarea className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-5 h-32 mb-8 outline-none focus:border-red-500 transition-all resize-none text-sm text-white" placeholder="Please provide a reason..." value={explanation} onChange={e => setExplanation(e.target.value)} /><div className="flex gap-4"><button onClick={handleConfirmAction} className="flex-1 bg-red-600 py-4 rounded-xl font-bold text-sm shadow-lg shadow-red-500/20 hover:bg-red-500 active:scale-95 text-white">Confirm</button><button onClick={() => setShowExplainModal(false)} className="flex-1 bg-zinc-900 border border-zinc-800 py-4 rounded-xl font-bold text-sm text-zinc-400 hover:bg-zinc-800 hover:text-white transition">Cancel</button></div></motion.div></div>)}
-                
+
                 {/* Extension Modal */}
                 {showExtensionModal && (<div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4"><motion.div initial={{ scale: 0.9 }} animate={{ scale: 1 }} className="bg-[#111] border border-white/10 p-10 rounded-[2.5rem] w-full max-w-md shadow-2xl"><h2 className="text-2xl font-black tracking-tight mb-2 text-white">Extend Deadline</h2><p className="text-zinc-500 text-sm mb-8 leading-relaxed">Requesting an extension will require a team vote.</p><input type="datetime-local" className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-4 text-white mb-8 outline-none focus:border-blue-500 transition-all" style={{ colorScheme: 'dark' }} value={extensionDate} onChange={e => setExtensionDate(e.target.value)} /><div className="flex gap-4"><button onClick={confirmExtensionRequest} className="flex-1 bg-blue-600 py-4 rounded-xl font-bold text-sm shadow-lg shadow-blue-500/20 transition-all hover:bg-blue-500 active:scale-95 text-white">Submit Request</button><button onClick={() => setShowExtensionModal(false)} className="flex-1 bg-zinc-900 border border-zinc-800 py-4 rounded-xl font-bold text-sm text-zinc-400 hover:bg-zinc-800 hover:text-white transition">Cancel</button></div></motion.div></div>)}
-
-                {/* INTEREST MESSAGE MODAL */}
-                {showInterestModal && (
-                    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                        <motion.div 
-                            initial={{ scale: 0.95, opacity: 0 }} 
-                            animate={{ scale: 1, opacity: 1 }} 
-                            className="bg-zinc-900 border border-zinc-800 p-8 rounded-[2rem] w-full max-w-md shadow-2xl"
-                        >
-                            <div className="flex justify-between items-center mb-6">
-                                <h2 className="text-xl font-bold text-white">Join Request</h2>
-                                <button onClick={() => setShowInterestModal(false)} className="p-2 hover:bg-zinc-800 rounded-full transition">
-                                    <X className="w-5 h-5 text-zinc-500" />
-                                </button>
-                            </div>
-
-                            <p className="text-zinc-400 text-sm mb-4">
-                                Add a short message to tell the leader why you're a good fit.
-                            </p>
-
-                            <textarea 
-                                className="w-full bg-black border border-zinc-800 rounded-xl p-4 h-32 outline-none focus:border-purple-500 transition text-zinc-200 resize-none mb-6"
-                                placeholder="Ex: I have 2 years of React experience and love this idea..."
-                                value={interestMessage}
-                                onChange={(e) => setInterestMessage(e.target.value)}
-                                autoFocus
-                            />
-
-                            <div className="flex gap-3">
-                                <button 
-                                    onClick={handleSendInterest} 
-                                    disabled={isSendingInterest}
-                                    className="flex-1 bg-purple-600 hover:bg-purple-500 text-white font-bold py-3.5 rounded-xl flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-900/20"
-                                >
-                                    {isSendingInterest ? <Loader2 className="w-4 h-4 animate-spin"/> : <Send className="w-4 h-4" />}
-                                    Send Request
-                                </button>
-                            </div>
-                        </motion.div>
-                    </div>
-                )}
             </AnimatePresence>
         </div>
     );

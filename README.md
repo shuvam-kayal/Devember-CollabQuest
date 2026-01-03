@@ -106,6 +106,9 @@ cd collabquest-frontend
 npm install framer-motion lucide-react js-cookie axios
 npm install -D @types/js-cookie
 npm install --save-dev @types/js-cookie
+npm install zod
+npm install react-markdown
+npm install react-hot-toast
 
 Create a file named .env.local inside collabquest-frontend/ and paste this:
 

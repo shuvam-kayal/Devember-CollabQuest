@@ -31,6 +31,7 @@ class ProfileUpdate(BaseModel):
     social_links: List[Link] = []
     professional_links: List[Link] = []
     achievements: List[Achievement] = []
+    project_highlights: Optional[List[str]] = None
 
 class ConnectRequest(BaseModel):
     handle_or_url: str
@@ -53,6 +54,21 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
         await current_user.save()
     
     return current_user
+
+@router.get("/top", response_model=List[dict])
+async def get_top_users():
+    """Returns top 10 users based on Trust Score"""
+    users = await User.find_all().sort("-trust_score").limit(10).to_list()
+    results = []
+    for u in users:
+        results.append({
+            "id": str(u.id),
+            "username": u.username,
+            "avatar_url": u.avatar_url,
+            "trust_score": u.trust_score,
+            "skills": [s.name for s in u.skills[:3]]
+        })
+    return results
 
 # --- BLOCKING FEATURE (NEW) ---
 
@@ -458,6 +474,16 @@ async def update_profile(data: ProfileUpdate, current_user: User = Depends(get_c
     current_user.social_links = data.social_links
     current_user.professional_links = data.professional_links
     current_user.achievements = data.achievements
+
+    if data.project_highlights is not None:
+        # Validate that user is actually a member of these projects
+        valid_ids = []
+        for pid in data.project_highlights:
+            if not ObjectId.is_valid(pid): continue
+            team = await Team.get(pid)
+            if team and str(current_user.id) in team.members:
+                valid_ids.append(pid)
+        current_user.project_highlights = valid_ids[:4]
     
     # Embedding generation
     achievements_text = " ".join([a.title for a in data.achievements])
@@ -470,6 +496,19 @@ async def update_profile(data: ProfileUpdate, current_user: User = Depends(get_c
     
     await current_user.save()
     return current_user
+
+@router.get("/{user_id}/highlights", response_model=List[Team])
+async def get_user_highlights(user_id: str):
+    if not ObjectId.is_valid(user_id): raise HTTPException(400, "Invalid ID")
+    user = await User.get(user_id)
+    if not user: raise HTTPException(404, "User not found")
+    
+    if not user.project_highlights: return []
+    
+    # Fetch teams where ID is in the highlights list
+    valid_ids = [ObjectId(tid) for tid in user.project_highlights if ObjectId.is_valid(tid)]
+    teams = await Team.find({"_id": {"$in": valid_ids}}).to_list()
+    return teams
 
 @router.put("/visibility", response_model=User)
 async def update_visibility(data: VisibilityUpdate, current_user: User = Depends(get_current_user)):
