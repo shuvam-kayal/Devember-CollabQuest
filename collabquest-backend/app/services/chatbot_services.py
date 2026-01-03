@@ -12,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
 from app.models import ChatMessage, Team, DeletionRequest, Notification, Task, User, CompletionRequest, MemberRequest, Match, ExtensionRequest
-from app.services.recommendation_service import search_vectors
+from app.services.recommendation_service import search_vectors, sync_data_to_chroma
 from app.services.vector_store import generate_embedding, calculate_similarity
 
 INTENT_EXAMPLES = {
@@ -60,6 +60,12 @@ INTENT_EXAMPLES = {
     "SEND_MESSAGE": [
         "send a message", "tell the team", "broadcast an announcement", "message him", 
         "notify everyone", "send a dm to Alice", "announcement: meeting starts now"
+    ],
+    "MANAGE_RECRUITMENT": [
+        "stop recruiting", "close applications", "open recruitment", 
+        "start looking for members", "we are full", "open spots available",
+        "pause hiring", "resume applications",
+        "resume recruiting", "start recruiting", "enable recruitment" # <--- ADD THESE
     ],
     "CODE_REQUEST": [
         "write python code", "fix this bug", "debug this function", "how do I code this", 
@@ -261,6 +267,7 @@ async def router_node(state: AgentState):
     - DAILY_BRIEFING (User wants a summary of notifications)
     - ANALYZE_TEAM (User asks about skills, hiring gaps, or roster balance)
     - SEND_MESSAGE (User wants to broadcast/DM someone)
+    - MANAGE_RECRUITMENT (User wants to open/close recruitment for a project)
     - CODE_REQUEST (User asks for code generation or debugging)
     - SEARCH_REQUEST (User is looking for *Projects* to join)
     - PROJECT_QUERY (User asks about *Data/Workload* - e.g., "Who is busy?", "Task status")
@@ -270,6 +277,7 @@ async def router_node(state: AgentState):
 
     [CRITICAL DISAMBIGUATION RULES]
     1. **"Recruit" vs "Search":** - If user says "Recruit people", "Find developers", "Hire members" -> GENERAL_QUERY (Bot cannot recruit; it must explain how to use the UI).
+       - If user says "Resume recruiting", "Start recruiting", "Stop recruiting" (Project Setting Switch) -> MANAGE_RECRUITMENT  <-- ADD THIS RULE
        - If user says "Find a project", "Search for teams" -> SEARCH_REQUEST (Bot CAN search projects).
 
     2. **"Action" vs "How-To":**
@@ -290,6 +298,7 @@ async def router_node(state: AgentState):
     Input: "Who has the most open tasks?" -> PROJECT_QUERY
     Input: "Kick John out of the group" -> REMOVE_MEMBER
     Input: "Hello, how are you?" -> GENERAL_QUERY
+    
 
     [YOUR TASK]
     User Input: "{question}"
@@ -481,15 +490,12 @@ async def manager_node(state: AgentState):
             pass
 
     if not target_team:
-        return {"final_response": f"I'm not sure which project you mean. I can see these projects: **{', '.join([t.name for t in relevant_teams])}**"}
-    
-    # Check locked status
-    if target_team.status == "completed" and intent != "DELETE_PROJECT":
-        return {"final_response": f"❌ Project **{target_team.name}** is already completed and locked."}
-
-    if not target_team:
-        # 🔥 NEW: Instructional Error Message
-        action_instruction = ""
+        # 1. Prepare list of valid projects
+        project_list = ', '.join([t.name for t in relevant_teams])
+        
+        # 2. Determine specific instruction based on Intent
+        action_instruction = "Manage [Project Name]"
+        
         if intent == "DELETE_PROJECT": 
             action_instruction = "Delete [Project Name]"
         elif intent == "COMPLETE_PROJECT": 
@@ -506,12 +512,20 @@ async def manager_node(state: AgentState):
             action_instruction = "Analyze team [Project Name]"
         elif intent == "SEND_MESSAGE": 
             action_instruction = "Tell [Name] in [Project Name] to [Message]"
-        else:
-            action_instruction = "Manage [Project Name]"
+        elif intent == "MANAGE_RECRUITMENT": 
+            action_instruction = "Open/Close recruitment for [Project Name]"
 
+        # 3. Return combined helpful response
         return {
-            "final_response": f"I'm not sure which project you mean. Please try again with the full command:\n\n👉 **'{action_instruction}'**"
+            "final_response": (
+                f"I'm not sure which project you mean. I can see these projects: **{project_list}**\n\n"
+                f"Please try again with the full command:\n👉 **'{action_instruction}'**"
+            )
         }
+    
+        # Check locked status
+    if target_team.status == "completed" and intent != "DELETE_PROJECT":
+        return {"final_response": f"❌ Project **{target_team.name}** is already completed and locked."}
 
     # --- BRANCH A: DELETE PROJECT ---
     if intent == "DELETE_PROJECT":
@@ -684,8 +698,12 @@ async def manager_node(state: AgentState):
         # Check for duplicate active votes
         existing = next((r for r in target_team.member_requests if r.target_user_id == target_id and r.is_active), None)
         if existing:
-            return {"final_response": f"⚠️ A vote to remove <@{target_id}> is already active."}
-
+            # --- FIX: Fetch Name for Display ---
+            target_user_obj = await User.get(target_id)
+            target_name = target_user_obj.username if target_user_obj else "Unknown Member"
+            
+            return {"final_response": f"⚠️ A vote to remove **{target_name}** is already active."}
+        
         # 4. START VOTE (The Only Path Now)
         # We removed the 'planning' check, so this runs for everyone.
         req = MemberRequest(
@@ -713,10 +731,20 @@ async def manager_node(state: AgentState):
                 ).insert()
                 count += 1
 
-        return {"final_response": f"🗳️ **Vote Initiated.** I've started a vote to remove <@{target_id}>. {count} other members have been notified."}    
+        target_user_obj = await User.get(target_id)
+        target_name = target_user_obj.username if target_user_obj else "Unknown Member"
+        return {"final_response": f"🗳️ **Vote Initiated.** I've started a vote to remove **{target_name}**. {count} other members have been notified."}    
     
     # --- BRANCH F: ASSIGN TASK ---
     if intent == "ASSIGN_TASK":
+        if target_team.status == "planning":
+            return {
+                "final_response": (
+                    f"❌ **Cannot Assign Task**\n\n"
+                    f"The project **{target_team.name}** is still in the **Planning** phase.\n"
+                    "You can only assign tasks once the project has officially started and is **Active**."
+                )
+            }
         # 1. Build Member List
         members_map = []
         for m_id in target_team.members:
@@ -787,7 +815,10 @@ async def manager_node(state: AgentState):
                     related_id=str(target_team.id)
                 ).insert()
 
-            return {"final_response": f"✅ **Task Assigned!**\n\n📝 **{data['description']}**\n👤 Assignee: <@{assignee}>\n📅 Deadline: {new_task.deadline.strftime('%Y-%m-%d')}"}
+            assignee_obj = await User.get(assignee)
+            assignee_name = assignee_obj.username if assignee_obj else "Unknown Member"
+
+            return {"final_response": f"✅ **Task Assigned!**\n\n📝 **{data['description']}**\n👤 Assignee: **{assignee_name}**\n📅 Deadline: {new_task.deadline.strftime('%Y-%m-%d')}"}
             
         except json.JSONDecodeError:
             print(f"JSON Parse Failed. Raw output: {raw}")
@@ -1061,6 +1092,39 @@ async def manager_node(state: AgentState):
             print(f"Analyze Error: {e}")
             return {"final_response": f"⚠️ I couldn't finish the analysis. Error: {str(e)}"}
         
+    # --- BRANCH: MANAGE RECRUITMENT (Team Setting) ---
+    if intent == "MANAGE_RECRUITMENT":
+        current_leader = str(target_team.leader_id).strip() if target_team.leader_id else ""
+        current_user = str(user_id).strip()
+        
+        if current_leader != current_user:
+             # Debugging: Print to console so you can see what went wrong
+             print(f"❌ LEADER MISMATCH: Project Leader '{current_leader}' vs User '{current_user}'")
+             return {"final_response": f"❌ **Permission Denied.**\n\nOnly the **Team Leader** can change recruitment status.\n(Current Leader ID: `{current_leader}`)"}
+
+        # 2. Determine desired state (Open vs Close)
+        # We look for keywords in the user's input to decide the action.
+        text = state["question"].lower()
+        should_open = any(word in text for word in ["open", "start", "resume", "looking"])
+        should_close = any(word in text for word in ["stop", "close", "pause", "full"])
+        
+        if should_open:
+            target_team.is_looking_for_members = True
+            await target_team.save()
+            await sync_data_to_chroma()
+            msg = f"✅ **Recruitment Opened!**\n\n**{target_team.name}** is now visible in the Marketplace. Users can find and apply to your team."
+        elif should_close:
+            target_team.is_looking_for_members = False
+            await target_team.save()
+            await sync_data_to_chroma()
+            msg = f"🚫 **Recruitment Paused.**\n\n**{target_team.name}** is now hidden from the Marketplace. No new applications will be received."
+        else:
+            # Fallback if the user just asked "Is recruitment open?"
+            status = "Open" if target_team.is_looking_for_members else "Closed"
+            return {"final_response": f"ℹ️ Recruitment is currently **{status}**.\n\nTo change it, say **'Stop recruiting'** or **'Open recruitment'**."}
+            
+        return {"final_response": msg}
+
 async def coder_node(state: AgentState):
     """Handles Coding Requests with Context."""
     print("🔧 Coder Node Active")
@@ -1409,6 +1473,13 @@ async def chat_node(state: AgentState):
     - If asked about accessibility, ONLY refer to "Selection Text-to-Speech"[cite: 191].
     - Explain: "Enable in Account Settings. Select text to hear it read aloud." [cite: 192]
 
+    Protocol E: The "No-Fake-Actions" Rule (CRITICAL)
+    - You are the MENTOR (Chat Mode). You DO NOT have write-access to the database.
+    - If the user asks you to "Open Recruitment", "Delete Project", "Remove Member", or "Update Capacity":
+      * YOU MUST REFUSE.
+      * Do NOT say "I have updated the status."
+      * Say: "I mistakenly received this request in Chat Mode. Please try stating the command clearer, like 'Manage recruitment for [Project Name]'."
+
     4. AI INTERACTION GUIDE (USER COMMANDS)
     - Start Project: "Create a new project named [Name]" [cite: 82]
     - Manage Team: "Remove [Member] from team" -> Starts Vote[cite: 211].
@@ -1483,7 +1554,7 @@ def route_decision(state):
     i = state["intent"]
     if i == "CREATE_PROJECT": return "planner"
     if i == "PROJECT_QUERY": return "data_analyst"
-    if i in ["DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER", "ASSIGN_TASK", "EXTEND_DEADLINE", "SHOW_TASKS", "SEND_MESSAGE", "DAILY_BRIEFING", "ANALYZE_TEAM"]: return "manager"
+    if i in ["DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER", "ASSIGN_TASK", "EXTEND_DEADLINE", "SHOW_TASKS", "SEND_MESSAGE", "DAILY_BRIEFING", "ANALYZE_TEAM", "MANAGE_RECRUITMENT"]: return "manager"
     if i == "CODE_REQUEST": return "coder"
     if i == "SEARCH_REQUEST": return "searcher"
     return "chatter"
