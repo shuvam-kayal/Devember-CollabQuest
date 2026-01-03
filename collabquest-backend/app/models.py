@@ -156,6 +156,8 @@ class User(Document):
     connections: List[str] = [] # List of User IDs
     connection_requests_received: List[str] = [] # List of User IDs
     connection_requests_sent: List[str] = [] # List of User IDs
+
+    project_highlights: List[str] = []
     
     class Settings: name = "users"
 

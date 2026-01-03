@@ -5,13 +5,14 @@ import Cookies from "js-cookie";
 import api from "@/lib/api";
 import { motion, AnimatePresence } from "framer-motion";
 import GlobalHeader from "@/components/GlobalHeader";
-import { 
-    Save,Sparkles, ArrowLeft, Clock, Calendar, Code2, Star, Heart, User, Plus, X, 
+import {
+    Save, Sparkles, ArrowLeft, Clock, Calendar, Code2, Star, Heart, User, Plus, X,
     Trash2, Zap, CheckCircle, AlertTriangle, Briefcase, Eye, EyeOff, Check,
     GraduationCap, Award, Linkedin, Code, ExternalLink, ShieldCheck, Loader2,
-    Globe, Twitter, Github, Instagram, Mail, Lock, Camera, Edit2
+    Globe, Twitter, Github, Instagram, Mail, Lock, Camera, Edit2, Layout, ChevronDown, ChevronUp
 } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const PRESET_SKILLS = ["React", "Python", "Node.js", "TypeScript", "Next.js", "Tailwind", "MongoDB", "Firebase"];
@@ -30,10 +31,10 @@ function ProfilePage() {
     const [loading, setLoading] = useState(true);
 
     // --- FIX 1: ADDED MISSING STATE VARIABLES ---
-    const [username, setUsername] = useState(""); 
-    const [fullName, setFullName] = useState(""); 
-    const [avatarUrl, setAvatarUrl] = useState(""); 
-    
+    const [username, setUsername] = useState("");
+    const [fullName, setFullName] = useState("");
+    const [avatarUrl, setAvatarUrl] = useState("");
+
     const [email, setEmail] = useState("");
     const [about, setAbout] = useState("");
     const [skills, setSkills] = useState<{ name: string, level: string }[]>([]);
@@ -51,14 +52,18 @@ function ProfilePage() {
     const [ratings, setRatings] = useState<any[]>([]);
     const [isLookingForTeam, setIsLookingForTeam] = useState(true);
 
+    const [myProjects, setMyProjects] = useState<any[]>([]);
+    const [highlightIds, setHighlightIds] = useState<string[]>([]);
+    const [expandedRating, setExpandedRating] = useState<number | null>(null);
+
     // New Features State
     const [platformStats, setPlatformStats] = useState<any>({});
     const [trustBreakdown, setTrustBreakdown] = useState<any>(null);
     const [visibility, setVisibility] = useState<any>({
         full_name: true,
-        linkedin: true, codeforces: true, leetcode: true, 
+        linkedin: true, codeforces: true, leetcode: true,
         education: true, achievements: true, ratings: true,
-        email: false 
+        email: false
     });
 
     // Inputs
@@ -84,7 +89,7 @@ function ProfilePage() {
         // Handle Linking Success/Error from URL
         const success = searchParams.get("success");
         const error = searchParams.get("error");
-        
+
         if (success === "github_linked") {
             alert("✅ GitHub account linked successfully!");
             router.replace("/profile");
@@ -100,9 +105,9 @@ function ProfilePage() {
             const u = res.data;
             // --- FIX 2: POPULATE NEW FIELDS ---
             setUsername(u.username || "");
-            setFullName(u.full_name || ""); 
-            setAvatarUrl(u.avatar_url || ""); 
-            
+            setFullName(u.full_name || "");
+            setAvatarUrl(u.avatar_url || "");
+
             setEmail(u.email || "");
             setAbout(u.about || "");
             setSkills(u.skills || []);
@@ -110,7 +115,7 @@ function ProfilePage() {
             setIsLookingForTeam(u.is_looking_for_team ?? true);
             if (u.availability?.length > 0) setAvailability(u.availability);
             setAge(u.age || "");
-            
+
             setEducationList(u.education || []);
             if (u.visibility_settings) setVisibility(u.visibility_settings);
             if (u.platform_stats) setPlatformStats(u.platform_stats);
@@ -121,27 +126,32 @@ function ProfilePage() {
             setAchievements(u.achievements || []);
             setConnectedAccounts(u.connected_accounts || {});
             setRatings(u.ratings_received || []);
+            setHighlightIds(u.project_highlights || []);
         }).finally(() => setLoading(false));
+
+        api.get("/users/me/projects").then(res => setMyProjects(res.data)).catch(console.error);
+
     }, [searchParams, router]);
 
     const saveProfile = async () => {
         try {
             await api.put("/users/profile", {
                 // --- FIX 3: SEND NEW FIELDS TO BACKEND ---
-                full_name: fullName, 
-                avatar_url: avatarUrl, 
-                
+                full_name: fullName,
+                avatar_url: avatarUrl,
+
                 about, interests, availability,
                 skills: skills.map(s => s.name),
                 is_looking_for_team: isLookingForTeam,
-                age, 
+                age,
                 education: educationList,
                 social_links: socialLinks,
-                professional_links: profLinks, achievements
+                professional_links: profLinks, achievements,
+                project_highlights: highlightIds
             });
-            alert("Profile Saved!");
-            window.location.reload(); 
-        } catch (err) { alert("Save failed"); }
+            toast.success("Profile Saved!");
+            window.location.reload();
+        } catch (err) { toast.error("Save failed"); }
     };
 
     // --- FIX 4: ADD MISSING HELPER FUNCTION ---
@@ -153,14 +163,23 @@ function ProfilePage() {
     const toggleVisibility = async (key: string) => {
         const newSettings = { ...visibility, [key]: !visibility[key] };
         setVisibility(newSettings);
-        try { await api.put("/users/visibility", { settings: newSettings }); } 
-        catch(e) { console.error(e); }
+        try { await api.put("/users/visibility", { settings: newSettings }); }
+        catch (e) { console.error(e); }
+    };
+
+    const toggleHighlight = (projectId: string) => {
+        if (highlightIds.includes(projectId)) {
+            setHighlightIds(highlightIds.filter(id => id !== projectId));
+        } else {
+            if (highlightIds.length >= 4) return toast.error("Max 4 highlights allowed");
+            setHighlightIds([...highlightIds, projectId]);
+        }
     };
 
     const connectPlatform = async (platform: string) => {
         if (platform === "github") {
             const token = Cookies.get("token");
-            if (!token) return alert("Please log in first.");
+            if (!token) return toast.error("Please log in first.");
             window.location.href = `${API_URL}/auth/link/github?token=${token}`;
             return;
         }
@@ -172,8 +191,8 @@ function ProfilePage() {
             setConnectedAccounts((prev: any) => ({ ...prev, [platform]: url }));
             if (res.data.stats) setPlatformStats((prev: any) => ({ ...prev, [platform]: res.data.stats }));
             if (res.data.breakdown) setTrustBreakdown(res.data.breakdown);
-            alert(`Connected ${platform} successfully!`);
-        } catch (e) { alert("Failed to verify account. Please check the handle/url."); }
+            toast.success(`Connected ${platform} successfully!`);
+        } catch (e) { toast.error("Failed to verify account. Please check the handle/url."); }
     };
 
     const removeSkill = (name: string) => setSkills(skills.filter(s => s.name !== name));
@@ -183,7 +202,7 @@ function ProfilePage() {
     const addSlot = (i: number) => { const n = [...availability]; n[i].slots.push({ start: "09:00", end: "12:00" }); setAvailability(n); };
     const removeSlot = (d: number, s: number) => { const n = [...availability]; n[d].slots = n[d].slots.filter((_, idx) => idx !== s); setAvailability(n); };
     const updateSlot = (d: number, s: number, f: 'start' | 'end', v: string) => { const n = [...availability]; n[d].slots[s][f] = v; setAvailability(n); };
-    
+
     const startSkillTest = async (skill: string) => { if (!confirm(`Start verification for ${skill}?`)) return; setQuizSkill(skill); setLoading(true); try { const res = await api.get(`/skills/start/${skill}`); setQuestions(res.data.questions); setShowQuiz(true); setCurrentQ(0); setUserAnswers([]); setQuizResult(null); setTimer(15); } catch (err) { alert("Error loading test."); } finally { setLoading(false); } };
     const handleAnswer = (optionIndex: number) => { const newAns = [...userAnswers, { id: questions[currentQ].id, selected: optionIndex }]; setUserAnswers(newAns); if (currentQ < questions.length - 1) { setCurrentQ(currentQ + 1); setTimer(15); } else { submitQuiz(newAns); } };
     useEffect(() => { if (!showQuiz || quizResult) return; if (timer > 0) { const t = setTimeout(() => setTimer(timer - 1), 1000); return () => clearTimeout(t); } else { handleAnswer(-1); } }, [timer, showQuiz, quizResult]);
@@ -192,16 +211,16 @@ function ProfilePage() {
     if (loading) return <div className="h-screen bg-gray-950 flex items-center justify-center"><Loader2 className="animate-spin text-purple-500" /></div>;
 
     const totalTrust = trustBreakdown ? (
-        (Number(trustBreakdown.base) || 0) + 
-        (Number(trustBreakdown.github) || 0) + 
-        (Number(trustBreakdown.linkedin) || 0) + 
-        (Number(trustBreakdown.codeforces) || 0) + 
+        (Number(trustBreakdown.base) || 0) +
+        (Number(trustBreakdown.github) || 0) +
+        (Number(trustBreakdown.linkedin) || 0) +
+        (Number(trustBreakdown.codeforces) || 0) +
         (Number(trustBreakdown.leetcode) || 0)
     ) : 5.0;
 
     return (
         <div className="min-h-screen w-full bg-transparent text-zinc-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
-            
+
             <main className="max-w-7xl mx-auto px-4 py-8">
                 {/* TOP BAR */}
                 <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 mb-10">
@@ -216,7 +235,7 @@ function ProfilePage() {
                     </div>
 
                     <div className="flex items-center gap-3 w-full md:w-auto">
-                        <button 
+                        <button
                             onClick={() => setIsLookingForTeam(!isLookingForTeam)}
                             className={`flex-1 md:flex-none px-5 py-2.5 rounded-2xl font-bold flex items-center justify-center gap-2 text-sm transition-all border ${isLookingForTeam ? 'bg-green-500/10 border-green-500/50 text-green-400' : 'bg-white/5 border-white/10 text-gray-400'}`}
                         >
@@ -230,18 +249,18 @@ function ProfilePage() {
                 </div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-                    
+
                     {/* LEFT COLUMN: IDENTITY & VERIFICATIONS */}
                     <div className="lg:col-span-4 space-y-8">
                         <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] shadow-xl">
                             <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-purple-400"><User className="w-5 h-5" /> Identity</h3>
-                            
+
                             <div className="flex flex-col items-center mb-6">
                                 <div className="relative group cursor-pointer" onClick={editAvatar}>
-                                    <img 
-                                        src={avatarUrl || "https://github.com/shadcn.png"} 
-                                        alt="Avatar" 
-                                        className="w-24 h-24 rounded-full border-4 border-gray-800 object-cover group-hover:opacity-50 transition-opacity" 
+                                    <img
+                                        src={avatarUrl || "https://github.com/shadcn.png"}
+                                        alt="Avatar"
+                                        className="w-24 h-24 rounded-full border-4 border-gray-800 object-cover group-hover:opacity-50 transition-opacity"
                                     />
                                     <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
                                         <Edit2 className="w-6 h-6 text-white" />
@@ -262,11 +281,11 @@ function ProfilePage() {
                                             {visibility.full_name ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
                                         </button>
                                     </div>
-                                    <input 
-                                        className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm focus:border-purple-500 transition-all outline-none" 
-                                        value={fullName} 
-                                        onChange={e => setFullName(e.target.value)} 
-                                        placeholder="Your Full Name" 
+                                    <input
+                                        className="w-full bg-black border border-white/10 rounded-xl p-3 text-sm focus:border-purple-500 transition-all outline-none"
+                                        value={fullName}
+                                        onChange={e => setFullName(e.target.value)}
+                                        placeholder="Your Full Name"
                                     />
                                 </div>
 
@@ -286,7 +305,7 @@ function ProfilePage() {
                                         {AGES.map(a => <option key={a} value={a}>{a}</option>)}
                                     </select>
                                 </div>
-                                
+
                                 {/* EMAIL SECTION */}
                                 <div>
                                     <div className="flex justify-between items-center mb-2">
@@ -307,7 +326,26 @@ function ProfilePage() {
                                 </div>
                             </div>
                         </div>
-                        
+
+                        {/* NEW SECTION: PROJECT HIGHLIGHTS (Place below Identity or Trust Score) */}
+                        <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
+                            <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-blue-400">
+                                <Layout className="w-5 h-5" /> Project Highlights
+                            </h3>
+                            <p className="text-xs text-gray-500 mb-4">Select up to 4 projects to showcase on your profile.</p>
+
+                            <div className="space-y-2 mb-4 max-h-40 overflow-y-auto custom-scrollbar">
+                                {myProjects.map(p => (
+                                    <div key={p.id || p._id} onClick={() => toggleHighlight(p.id || p._id)} className={`p-3 rounded-xl border cursor-pointer transition-all flex items-center justify-between ${highlightIds.includes(p.id || p._id) ? "bg-blue-500/10 border-blue-500/50" : "bg-black border-white/5 hover:bg-white/5"}`}>
+                                        <span className="text-sm font-bold text-white truncate max-w-[180px]">{p.name}</span>
+                                        {highlightIds.includes(p.id || p._id) && <CheckCircle className="w-4 h-4 text-blue-400" />}
+                                    </div>
+                                ))}
+                                {myProjects.length === 0 && <p className="text-xs text-gray-600">Join a team to highlight it here.</p>}
+                            </div>
+                            <div className="text-right text-xs text-gray-500">{highlightIds.length}/4 Selected</div>
+                        </div>
+
                         {/* TRUST SCORE BREAKDOWN */}
                         {trustBreakdown && (
                             <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
@@ -317,21 +355,21 @@ function ProfilePage() {
                                     </h3>
                                     <span className="text-2xl font-black text-white">{Math.min(7.0, totalTrust).toFixed(1)}<span className="text-gray-500 text-sm">/7</span></span>
                                 </div>
-                                
+
                                 <div className="space-y-3">
                                     <div className="flex justify-between items-center bg-black p-3 rounded-xl border border-white/10">
                                         <span className="text-gray-400 text-sm font-bold">Base Score</span>
                                         <span className="text-green-400 font-bold">{trustBreakdown.base?.toFixed(1) || "5.0"}</span>
                                     </div>
-                                    
+
                                     <div className="bg-black p-3 rounded-xl border border-white/10">
                                         <div className="flex justify-between items-center mb-2">
-                                            <span className="text-gray-300 text-sm font-bold flex items-center gap-2"><Github className="w-3 h-3"/> GitHub</span>
+                                            <span className="text-gray-300 text-sm font-bold flex items-center gap-2"><Github className="w-3 h-3" /> GitHub</span>
                                             <span className="text-green-400 text-xs font-mono">+{Number(trustBreakdown.github || 0).toFixed(1)}</span>
                                         </div>
                                         {trustBreakdown.details && trustBreakdown.details.some((d: string) => d.includes("GitHub")) ? (
                                             <div className="space-y-1 pl-5 border-l border-white/10">
-                                                {trustBreakdown.details.filter((d:string) => d.includes("GitHub")).map((d:string, i:number) => (
+                                                {trustBreakdown.details.filter((d: string) => d.includes("GitHub")).map((d: string, i: number) => (
                                                     <p key={i} className="text-[10px] text-gray-500">{d.replace("GitHub: ", "")}</p>
                                                 ))}
                                             </div>
@@ -340,7 +378,7 @@ function ProfilePage() {
                                         )}
                                     </div>
 
-                                    {trustBreakdown.details?.filter((d:string) => !d.includes("GitHub")).map((detail: string, i: number) => {
+                                    {trustBreakdown.details?.filter((d: string) => !d.includes("GitHub")).map((detail: string, i: number) => {
                                         const parts = detail.split(":");
                                         const platform = parts[0];
                                         const info = parts[1] || "";
@@ -363,14 +401,14 @@ function ProfilePage() {
                                 {/* GitHub */}
                                 <div className="bg-black border border-white/5 rounded-2xl p-4 flex justify-between items-center">
                                     <div className="flex items-center gap-3">
-                                        <Github className="w-5 h-5 text-gray-400"/>
+                                        <Github className="w-5 h-5 text-gray-400" />
                                         <span className="font-bold text-sm">GitHub</span>
                                     </div>
                                     <div className="flex items-center gap-2">
                                         {connectedAccounts.github ? (
                                             <div className="flex items-center gap-2">
                                                 <span className="text-xs text-gray-500 font-mono">@{connectedAccounts.github}</span>
-                                                <CheckCircle className="w-4 h-4 text-green-500"/>
+                                                <CheckCircle className="w-4 h-4 text-green-500" />
                                             </div>
                                         ) : (
                                             <button onClick={() => connectPlatform('github')} className="text-xs bg-white/10 px-3 py-1.5 rounded-full text-white hover:bg-white/20 transition flex items-center gap-1">
@@ -384,12 +422,12 @@ function ProfilePage() {
                                 <div className="bg-black border border-white/5 rounded-2xl p-4">
                                     <div className="flex justify-between items-start mb-2">
                                         <div className="flex items-center gap-3">
-                                            <Code className="w-5 h-5 text-gray-400"/>
+                                            <Code className="w-5 h-5 text-gray-400" />
                                             <span className="font-bold text-sm">Codeforces</span>
                                         </div>
                                         {connectedAccounts.codeforces ? (
                                             <button onClick={() => toggleVisibility('codeforces')} className="text-gray-500 hover:text-white">
-                                                {visibility.codeforces ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
+                                                {visibility.codeforces ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                                             </button>
                                         ) : (
                                             <button onClick={() => connectPlatform('codeforces')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>
@@ -413,12 +451,12 @@ function ProfilePage() {
                                 <div className="bg-black border border-white/5 rounded-2xl p-4">
                                     <div className="flex justify-between items-start mb-2">
                                         <div className="flex items-center gap-3">
-                                            <Code2 className="w-5 h-5 text-gray-400"/>
+                                            <Code2 className="w-5 h-5 text-gray-400" />
                                             <span className="font-bold text-sm">LeetCode</span>
                                         </div>
                                         {connectedAccounts.leetcode ? (
                                             <button onClick={() => toggleVisibility('leetcode')} className="text-gray-500 hover:text-white">
-                                                {visibility.leetcode ? <Eye className="w-4 h-4"/> : <EyeOff className="w-4 h-4"/>}
+                                                {visibility.leetcode ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
                                             </button>
                                         ) : (
                                             <button onClick={() => connectPlatform('leetcode')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>
@@ -431,18 +469,18 @@ function ProfilePage() {
                                         </div>
                                     )}
                                 </div>
-                                
+
                                 {/* LinkedIn */}
                                 <div className="bg-black border border-white/5 rounded-2xl p-4 flex justify-between items-center">
                                     <div className="flex items-center gap-3">
-                                        <Linkedin className="w-5 h-5 text-gray-400"/>
+                                        <Linkedin className="w-5 h-5 text-gray-400" />
                                         <span className="font-bold text-sm">LinkedIn</span>
                                     </div>
                                     <div className="flex items-center gap-2">
-                                        {connectedAccounts.linkedin ? <CheckCircle className="w-4 h-4 text-green-500"/> : <button onClick={() => connectPlatform('linkedin')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>}
+                                        {connectedAccounts.linkedin ? <CheckCircle className="w-4 h-4 text-green-500" /> : <button onClick={() => connectPlatform('linkedin')} className="text-xs bg-white/10 px-2 py-1 rounded text-white hover:bg-white/20">Connect</button>}
                                         {connectedAccounts.linkedin && (
                                             <button onClick={() => toggleVisibility('linkedin')} className="text-gray-500 hover:text-white ml-2">
-                                                {visibility.linkedin ? <Eye className="w-3 h-3"/> : <EyeOff className="w-3 h-3"/>}
+                                                {visibility.linkedin ? <Eye className="w-3 h-3" /> : <EyeOff className="w-3 h-3" />}
                                             </button>
                                         )}
                                     </div>
@@ -453,7 +491,7 @@ function ProfilePage() {
 
                     {/* RIGHT COLUMN: EXPERTISE, EDUCATION, SOCIALS, ACHIEVEMENTS */}
                     <div className="lg:col-span-8 space-y-8">
-                        
+
                         {/* ACADEMIC QUALIFICATIONS */}
                         <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem]">
                             <div className="flex justify-between items-center mb-6">
@@ -464,7 +502,7 @@ function ProfilePage() {
                                     <Plus className="w-4 h-4" />
                                 </button>
                             </div>
-                            
+
                             <div className="space-y-4">
                                 {educationList.map((edu, index) => (
                                     <div key={index} className="p-4 bg-black border border-white/10 rounded-xl relative group">
@@ -501,86 +539,85 @@ function ProfilePage() {
 
                         {/* EXPERTISE SECTION */}
                         <div className="relative overflow-hidden bg-[#0a0a0a] border border-white/10 p-8 rounded-[2rem] shadow-2xl shadow-black/50">
-  {/* Subtle Background Glow effect */}
-  <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+                            {/* Subtle Background Glow effect */}
+                            <div className="absolute top-0 right-0 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
 
-  {/* Header Section */}
-  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 relative z-10">
-    <div>
-      <h3 className="text-xl font-bold flex items-center gap-3 text-white">
-        <div className="p-2 bg-blue-500/10 rounded-lg">
-          <Code2 className="w-5 h-5 text-blue-400" />
-        </div>
-        Technical Expertise
-      </h3>
-      <p className="text-xs text-gray-500 mt-1 ml-1">Verify your skills to boost your trust score.</p>
-    </div>
+                            {/* Header Section */}
+                            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-8 relative z-10">
+                                <div>
+                                    <h3 className="text-xl font-bold flex items-center gap-3 text-white">
+                                        <div className="p-2 bg-blue-500/10 rounded-lg">
+                                            <Code2 className="w-5 h-5 text-blue-400" />
+                                        </div>
+                                        Technical Expertise
+                                    </h3>
+                                    <p className="text-xs text-gray-500 mt-1 ml-1">Verify your skills to boost your trust score.</p>
+                                </div>
 
-    {/* Custom Styled Select Button */}
-    <div className="relative group">
-      <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
-        <Plus className="w-4 h-4 text-blue-400 group-hover:text-white transition-colors" />
-      </div>
-      <select 
-        className="appearance-none bg-[#111] hover:bg-blue-600/10 border border-white/10 hover:border-blue-500/50 text-gray-300 hover:text-white font-medium pl-9 pr-6 py-2.5 rounded-xl text-xs transition-all cursor-pointer outline-none focus:ring-2 focus:ring-blue-500/50"
-        value={dropdownValue} 
-        onChange={e => { startSkillTest(e.target.value); setDropdownValue(""); }}
-      >
-        <option value="" disabled>Add New Skill</option>
-        {PRESET_SKILLS.filter(s => !skills.find(sk => sk.name === s)).map(s => (
-          <option key={s} value={s} className="bg-[#111] text-gray-300">
-            {s}
-          </option>
-        ))}
-      </select>
-    </div>
-  </div>
+                                {/* Custom Styled Select Button */}
+                                <div className="relative group">
+                                    <div className="absolute inset-y-0 left-3 flex items-center pointer-events-none">
+                                        <Plus className="w-4 h-4 text-blue-400 group-hover:text-white transition-colors" />
+                                    </div>
+                                    <select
+                                        className="appearance-none bg-[#111] hover:bg-blue-600/10 border border-white/10 hover:border-blue-500/50 text-gray-300 hover:text-white font-medium pl-9 pr-6 py-2.5 rounded-xl text-xs transition-all cursor-pointer outline-none focus:ring-2 focus:ring-blue-500/50"
+                                        value={dropdownValue}
+                                        onChange={e => { startSkillTest(e.target.value); setDropdownValue(""); }}
+                                    >
+                                        <option value="" disabled>Add New Skill</option>
+                                        {PRESET_SKILLS.filter(s => !skills.find(sk => sk.name === s)).map(s => (
+                                            <option key={s} value={s} className="bg-[#111] text-gray-300">
+                                                {s}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            </div>
 
-  {/* Skills Grid */}
-  <div className="flex flex-wrap gap-3 relative z-10">
-    {skills.length > 0 ? (
-      skills.map(s => (
-        <div 
-          key={s.name} 
-          className="group flex items-center gap-3 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-blue-500/30 pl-4 pr-3 py-2.5 rounded-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-500/10"
-        >
-          {/* Skill Name */}
-          <span className="text-sm font-medium text-gray-200 group-hover:text-white">
-            {s.name}
-          </span>
-          
-          {/* Level Badge */}
-          <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-black/40 border border-white/5">
-            <div className={`w-1.5 h-1.5 rounded-full ${
-              s.level === 'Expert' ? 'bg-purple-400' : 
-              s.level === 'Advanced' ? 'bg-blue-400' : 'bg-emerald-400'
-            }`} />
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
-              {s.level}
-            </span>
-          </div>
+                            {/* Skills Grid */}
+                            <div className="flex flex-wrap gap-3 relative z-10">
+                                {skills.length > 0 ? (
+                                    skills.map(s => (
+                                        <div
+                                            key={s.name}
+                                            className="group flex items-center gap-3 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-blue-500/30 pl-4 pr-3 py-2.5 rounded-xl transition-all duration-300 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-blue-500/10"
+                                        >
+                                            {/* Skill Name */}
+                                            <span className="text-sm font-medium text-gray-200 group-hover:text-white">
+                                                {s.name}
+                                            </span>
 
-          {/* Delete Button (Reveals on Hover) */}
-          <button 
-            onClick={() => removeSkill(s.name)} 
-            className="opacity-0 group-hover:opacity-100 -ml-2 group-hover:ml-0 w-0 group-hover:w-auto p-1 text-gray-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all duration-200"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))
-    ) : (
-      /* Empty State */
-      <div className="w-full flex flex-col items-center justify-center py-12 border-2 border-dashed border-white/5 rounded-2xl bg-white/[0.02]">
-        <div className="p-3 bg-white/5 rounded-full mb-3">
-            <Sparkles className="w-5 h-5 text-gray-600" />
-        </div>
-        <p className="text-gray-500 text-sm font-medium">No skills verified yet</p>
-        <p className="text-gray-700 text-xs mt-1">Take a skill test to showcase your expertise</p>
-      </div>
-    )}
-  </div>
-</div>
+                                            {/* Level Badge */}
+                                            <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-black/40 border border-white/5">
+                                                <div className={`w-1.5 h-1.5 rounded-full ${s.level === 'Expert' ? 'bg-purple-400' :
+                                                    s.level === 'Advanced' ? 'bg-blue-400' : 'bg-emerald-400'
+                                                    }`} />
+                                                <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">
+                                                    {s.level}
+                                                </span>
+                                            </div>
+
+                                            {/* Delete Button (Reveals on Hover) */}
+                                            <button
+                                                onClick={() => removeSkill(s.name)}
+                                                className="opacity-0 group-hover:opacity-100 -ml-2 group-hover:ml-0 w-0 group-hover:w-auto p-1 text-gray-500 hover:text-red-400 hover:bg-red-400/10 rounded-lg transition-all duration-200"
+                                            >
+                                                <X className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    ))
+                                ) : (
+                                    /* Empty State */
+                                    <div className="w-full flex flex-col items-center justify-center py-12 border-2 border-dashed border-white/5 rounded-2xl bg-white/[0.02]">
+                                        <div className="p-3 bg-white/5 rounded-full mb-3">
+                                            <Sparkles className="w-5 h-5 text-gray-600" />
+                                        </div>
+                                        <p className="text-gray-500 text-sm font-medium">No skills verified yet</p>
+                                        <p className="text-gray-700 text-xs mt-1">Take a skill test to showcase your expertise</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                         {/* SOCIAL PRESENCE */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="bg-[#0f0f0f] border border-white/5 p-6 rounded-[2rem] flex flex-col">
@@ -590,10 +627,10 @@ function ProfilePage() {
                                         <div key={i} className="flex items-center justify-between bg-black border border-white/5 p-3 rounded-xl group transition-all hover:bg-white/5">
                                             <div className="flex items-center gap-3 overflow-hidden">
                                                 <div className="p-2 bg-white/5 rounded-lg text-gray-400">
-                                                    {l.platform.toLowerCase() === 'twitter' ? <Twitter className="w-3.5 h-3.5" /> : 
-                                                     l.platform.toLowerCase() === 'github' ? <Github className="w-3.5 h-3.5" /> : 
-                                                     l.platform.toLowerCase() === 'instagram' ? <Instagram className="w-3.5 h-3.5" /> : 
-                                                     <Globe className="w-3.5 h-3.5" />}
+                                                    {l.platform.toLowerCase() === 'twitter' ? <Twitter className="w-3.5 h-3.5" /> :
+                                                        l.platform.toLowerCase() === 'github' ? <Github className="w-3.5 h-3.5" /> :
+                                                            l.platform.toLowerCase() === 'instagram' ? <Instagram className="w-3.5 h-3.5" /> :
+                                                                <Globe className="w-3.5 h-3.5" />}
                                                 </div>
                                                 <div className="flex flex-col overflow-hidden">
                                                     <span className="text-[10px] font-bold text-gray-500 uppercase">{l.platform}</span>
@@ -658,22 +695,42 @@ function ProfilePage() {
                             </div>
                         </div>
 
-                        {/* PEER TESTIMONIALS (RESTORED) */}
+                        {/* PEER TESTIMONIALS */}
                         {ratings.length > 0 && (
                             <div className="bg-[#0f0f0f] border border-white/5 p-8 rounded-[2.5rem]">
                                 <div className="flex justify-between items-center mb-8">
                                     <h3 className="text-xl font-bold text-yellow-400 flex items-center gap-3"><Star className="w-6 h-6" /> Peer Testimonials</h3>
-                                    <button onClick={() => toggleVisibility('ratings')} className="text-gray-500 hover:text-white">
-                                        {visibility.ratings ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                                    </button>
+                                    {/* REMOVED VISIBILITY TOGGLE BUTTON */}
                                 </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {ratings.map((r, i) => (
-                                        <div key={i} className="bg-black border border-white/10 p-5 rounded-2xl relative overflow-hidden group hover:border-yellow-500/30 transition-all">
-                                            <div className="absolute top-0 right-0 p-3 bg-yellow-500/10 text-yellow-500 text-sm font-black">{r.score}</div>
-                                            <h4 className="font-bold text-white text-sm pr-10">{r.project_name}</h4>
+                                        <div key={i} onClick={() => setExpandedRating(expandedRating === i ? null : i)} className="bg-black border border-white/10 p-5 rounded-2xl relative overflow-hidden group hover:border-yellow-500/30 transition-all cursor-pointer">
+                                            <div className="flex justify-between items-start mb-2">
+                                                <h4 className="font-bold text-white text-sm pr-2 truncate">{r.project_name}</h4>
+                                                <div className="p-1.5 bg-yellow-500/10 text-yellow-500 text-xs font-black rounded-lg">{r.score}</div>
+                                            </div>
                                             <p className="text-[10px] text-gray-500 mb-3">by {r.rater_name}</p>
-                                            <p className="text-xs text-gray-400 italic leading-relaxed">"{r.explanation}"</p>
+                                            <p className="text-xs text-gray-400 italic leading-relaxed line-clamp-2">"{r.explanation}"</p>
+
+                                            {/* Detailed Breakdown Dropdown */}
+                                            <AnimatePresence>
+                                                {expandedRating === i && (
+                                                    <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="mt-4 pt-4 border-t border-white/10 overflow-hidden">
+                                                        <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                                            {Object.entries(r.breakdown || {}).map(([key, val]: any) => (
+                                                                <div key={key} className="flex justify-between bg-white/5 p-1.5 rounded">
+                                                                    <span className="text-gray-400 capitalize">{key.replace('_', ' ')}</span>
+                                                                    <span className="text-white font-bold">{val}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </motion.div>
+                                                )}
+                                            </AnimatePresence>
+
+                                            <div className="mt-2 flex justify-center text-gray-600">
+                                                {expandedRating === i ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
@@ -772,10 +829,10 @@ function ProfilePage() {
 }
 
 export default function ProfilePages() {
-  return (
-    // You can put a loading spinner in the "fallback"
-    <Suspense fallback={<div>Loading chat...</div>}>
-      <ProfilePage />
-    </Suspense>
-  )
+    return (
+        // You can put a loading spinner in the "fallback"
+        <Suspense fallback={<div>Loading chat...</div>}>
+            <ProfilePage />
+        </Suspense>
+    )
 }

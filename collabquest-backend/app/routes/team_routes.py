@@ -177,8 +177,6 @@ async def get_top_projects():
         {"$limit": 10}
     ]
     
-    # ✅ FIX: Use get_pymongo_collection() and await the to_list call only
-    # accessing .aggregate() is synchronous in Motor, .to_list() is asynchronous
     cursor = User.get_pymongo_collection().aggregate(pipeline)
     agg_results = await cursor.to_list(length=10)
     

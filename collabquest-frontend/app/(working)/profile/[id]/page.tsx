@@ -3,10 +3,10 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import api from "@/lib/api";
 import GlobalHeader from "@/components/GlobalHeader";
-import { 
-    ArrowLeft, Code2, GraduationCap, Link as LinkIcon, 
+import {
+    ArrowLeft, Code2, GraduationCap, Link as LinkIcon, Layout, ChevronDown, ChevronUp,
     Star, ShieldCheck, Github, Linkedin, Code, Mail, Loader2,
-    MessageSquare, Send, X, Check, MapPin, 
+    MessageSquare, Send, X, Check, MapPin,
     Ban, Sparkles // Added from Code B
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -16,7 +16,7 @@ const TrustScoreRing = ({ score }: { score: number }) => {
     const radius = 30;
     const circumference = 2 * Math.PI * radius;
     const fillPercent = (Math.min(score, 10) / 10) * circumference;
-    
+
     // Color logic
     const color = score >= 8 ? "text-green-500" : score >= 5 ? "text-yellow-500" : "text-red-500";
 
@@ -24,9 +24,9 @@ const TrustScoreRing = ({ score }: { score: number }) => {
         <div className="relative flex items-center justify-center w-24 h-24">
             <svg className="transform -rotate-90 w-full h-full">
                 <circle cx="50%" cy="50%" r={radius} stroke="currentColor" strokeWidth="6" fill="transparent" className="text-zinc-800" />
-                <circle 
-                    cx="50%" cy="50%" r={radius} stroke="currentColor" strokeWidth="6" fill="transparent" 
-                    strokeDasharray={circumference} strokeDashoffset={circumference - fillPercent} 
+                <circle
+                    cx="50%" cy="50%" r={radius} stroke="currentColor" strokeWidth="6" fill="transparent"
+                    strokeDasharray={circumference} strokeDashoffset={circumference - fillPercent}
                     strokeLinecap="round"
                     className={`${color} transition-all duration-1000 ease-out`}
                 />
@@ -66,7 +66,8 @@ export default function PublicProfile() {
     const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState("overview"); // 'overview', 'stats', 'reviews'
     const [copied, setCopied] = useState(false);
-    
+    const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+
     // Added Compatibility State from Code B
     const [compatibility, setCompatibility] = useState<number | null>(null);
 
@@ -76,11 +77,14 @@ export default function PublicProfile() {
     const [emailBody, setEmailBody] = useState("");
     const [sendingEmail, setSendingEmail] = useState(false);
 
+    const [highlights, setHighlights] = useState<any[]>([]);
+    const [expandedRating, setExpandedRating] = useState<number | null>(null);
+
     // Merged useEffect logic from Code B into Code A
     useEffect(() => {
         if (params.id) {
             setLoading(true);
-            
+
             // 1. Fetch User Profile
             const fetchUser = api.get(`/users/${params.id}`)
                 .then(res => setUser(res.data))
@@ -98,14 +102,24 @@ export default function PublicProfile() {
                 .then(res => setCompatibility(res.data.score))
                 .catch(err => console.error("Failed to fetch compatibility", err));
 
+            const fetchHighlights = api.get(`/users/${params.id}/highlights`)
+                .then(res => setHighlights(res.data))
+                .catch(console.error);
+
+            const checkCurrentUser = api.get("/users/me")
+                .then(res => setCurrentUserId(res.data.id || res.data._id))
+                .catch(() => setCurrentUserId(null));
+
             // Wait for both (or at least user fetch) to finish loading
-            Promise.allSettled([fetchUser, fetchCompatibility])
+            Promise.allSettled([fetchUser, fetchCompatibility, fetchHighlights, checkCurrentUser])
                 .finally(() => setLoading(false));
         }
     }, [params.id, router]);
 
+    const isOwnProfile = user && currentUserId && (user.id === currentUserId || user._id === currentUserId);
+
     const isVisible = (key: string) => {
-        if (!user || !user.visibility_settings) return true; 
+        if (!user || !user.visibility_settings) return true;
         return user.visibility_settings[key];
     };
 
@@ -138,7 +152,7 @@ export default function PublicProfile() {
     // Added Block User Functionality from Code B
     const handleBlockUser = async () => {
         if (!confirm(`Are you sure you want to BLOCK ${user.username}?\n\nThey will be removed from your connections, matches, and chats. You won't see them anymore.`)) return;
-        
+
         try {
             await api.post(`/users/${user.id || user._id}/block`);
             alert("User blocked.");
@@ -149,7 +163,7 @@ export default function PublicProfile() {
     };
 
     if (loading) return <div className="min-h-screen bg-black text-white"><GlobalHeader /><ProfileSkeleton /></div>;
-    
+
     if (!user) return (
         <div className="min-h-screen bg-black text-white flex flex-col">
             <GlobalHeader />
@@ -165,7 +179,7 @@ export default function PublicProfile() {
     const githubDetails = user.trust_score_breakdown?.details?.filter((d: string) => d.includes("GitHub")) || [];
 
     return (
-       <div className="min-h-screen w-full bg-transparent text-zinc-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
+        <div className="min-h-screen w-full bg-transparent text-zinc-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
             {/* Background Ambient Glow */}
             <div className="fixed inset-0 z-0 pointer-events-none">
                 <div className="absolute top-0 left-1/4 w-96 h-96 bg-purple-900/20 blur-[100px] rounded-full" />
@@ -173,22 +187,24 @@ export default function PublicProfile() {
             </div>
 
             <div className="relative z-10 max-w-6xl mx-auto p-4 md:p-8">
-                
+
                 {/* --- HEADER SECTION --- */}
-                <motion.div 
+                <motion.div
                     initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
                     className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 rounded-[2rem] overflow-hidden mb-8"
                 >
                     {/* Banner */}
                     <div className="h-40 bg-gradient-to-r from-zinc-800 to-zinc-900 relative">
                         <button onClick={() => router.back()} className="absolute top-6 left-6 flex items-center gap-2 text-white/70 hover:text-white bg-black/20 backdrop-blur px-4 py-2 rounded-full transition hover:bg-black/40">
-                            <ArrowLeft className="w-4 h-4"/> Back
+                            <ArrowLeft className="w-4 h-4" /> Back
                         </button>
 
                         {/* NEW: Block Button from Code B (Styled to match Code A) */}
-                        <button onClick={handleBlockUser} className="absolute top-6 right-6 flex items-center gap-2 text-red-400 hover:text-red-200 bg-red-900/20 backdrop-blur px-4 py-2 rounded-full border border-red-500/20 transition hover:bg-red-900/40 text-xs font-bold uppercase tracking-wider">
-                            <Ban className="w-3 h-3"/> Block
-                        </button>
+                        {!isOwnProfile && (
+                            <button onClick={handleBlockUser} className="absolute top-6 right-6 flex items-center gap-2 text-red-400 hover:text-red-200 bg-red-900/20 backdrop-blur px-4 py-2 rounded-full border border-red-500/20 transition hover:bg-red-900/40 text-xs font-bold uppercase tracking-wider">
+                                <Ban className="w-3 h-3" /> Block
+                            </button>
+                        )}
                     </div>
 
                     <div className="px-8 pb-8 relative">
@@ -201,7 +217,7 @@ export default function PublicProfile() {
                                 </div>
                                 <div className="mb-2">
                                     <h1 className="text-4xl font-black text-white tracking-tight">{user.username}</h1>
-                                    
+
                                     {/* NEW: Full Name from Code B */}
                                     {isVisible('full_name') && user.full_name && (
                                         <div className="text-lg text-zinc-400 font-medium">{user.full_name}</div>
@@ -210,9 +226,9 @@ export default function PublicProfile() {
                                     <div className="flex flex-wrap items-center gap-4 text-sm text-zinc-400 mt-2">
                                         {/* NEW: Age from Code B */}
                                         {user.age && <span className="bg-zinc-800 px-2 py-0.5 rounded text-xs text-zinc-300">Age: {user.age}</span>}
-                                        
-                                        {user.school && <span className="flex items-center gap-1.5"><GraduationCap className="w-4 h-4 text-purple-400"/> {user.school}</span>}
-                                        {user.location && <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-blue-400"/> {user.location || "Remote"}</span>}
+
+                                        {user.school && <span className="flex items-center gap-1.5"><GraduationCap className="w-4 h-4 text-purple-400" /> {user.school}</span>}
+                                        {user.location && <span className="flex items-center gap-1.5"><MapPin className="w-4 h-4 text-blue-400" /> {user.location || "Remote"}</span>}
                                     </div>
                                 </div>
                             </div>
@@ -223,14 +239,18 @@ export default function PublicProfile() {
                                     <button onClick={handleCopyLink} className="p-3 bg-zinc-800 rounded-xl hover:bg-zinc-700 hover:text-white text-zinc-400 transition border border-white/5" title="Copy Profile Link">
                                         {copied ? <Check className="w-5 h-5 text-green-400" /> : <LinkIcon className="w-5 h-5" />}
                                     </button>
-                                    <button onClick={() => router.push(`/chat?targetId=${user.id || user._id}`)} className="bg-white text-black px-6 py-3 rounded-xl font-bold hover:bg-zinc-200 transition flex items-center gap-2">
-                                        <MessageSquare className="w-4 h-4" /> Chat
-                                    </button>
-                                    <button onClick={() => setShowEmailModal(true)} className="bg-purple-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-purple-500 transition shadow-lg shadow-purple-900/20">
-                                        <Mail className="w-4 h-4" />
-                                    </button>
+                                    {!isOwnProfile && (
+                                        <>
+                                            <button onClick={() => router.push(`/chat?targetId=${user.id || user._id}`)} className="bg-white text-black px-6 py-3 rounded-xl font-bold hover:bg-zinc-200 transition flex items-center gap-2">
+                                                <MessageSquare className="w-4 h-4" /> Chat
+                                            </button>
+                                            <button onClick={() => setShowEmailModal(true)} className="bg-purple-600 text-white px-6 py-3 rounded-xl font-bold hover:bg-purple-500 transition shadow-lg shadow-purple-900/20">
+                                                <Mail className="w-4 h-4" />
+                                            </button>
+                                        </>
+                                    )}
                                 </div>
-                                
+
                                 <div className="flex items-center gap-4">
                                     {/* NEW: AI Match Score from Code B (Styled to match Code A) */}
                                     {compatibility !== null && (
@@ -259,13 +279,12 @@ export default function PublicProfile() {
 
                     {/* Navigation Tabs */}
                     <div className="flex border-t border-white/5 px-8">
-                        {['overview', 'stats', 'reviews'].map((tab) => (
+                        {['overview', 'projects', 'stats', 'reviews'].map((tab) => (
                             <button
                                 key={tab}
                                 onClick={() => setActiveTab(tab)}
-                                className={`px-6 py-4 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors ${
-                                    activeTab === tab ? "border-purple-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
-                                }`}
+                                className={`px-6 py-4 text-sm font-bold uppercase tracking-wider border-b-2 transition-colors ${activeTab === tab ? "border-purple-500 text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"
+                                    }`}
                             >
                                 {tab === 'stats' ? "Stats " : tab}
                             </button>
@@ -275,18 +294,18 @@ export default function PublicProfile() {
 
                 {/* --- CONTENT AREA --- */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    
+
                     {/* LEFT SIDEBAR (Always Visible) */}
                     <div className="space-y-6">
                         {/* Skills */}
                         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.1 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-3xl">
-                            <h3 className="font-bold mb-4 flex items-center gap-2 text-zinc-100"><Code2 className="w-5 h-5 text-purple-400"/> Top Skills</h3>
+                            <h3 className="font-bold mb-4 flex items-center gap-2 text-zinc-100"><Code2 className="w-5 h-5 text-purple-400" /> Top Skills</h3>
                             <div className="flex flex-wrap gap-2">
-                                {user.skills?.map((s:any) => (
+                                {user.skills?.map((s: any) => (
                                     <span key={s.name} className="bg-zinc-800 text-zinc-300 border border-zinc-700 px-3 py-1.5 rounded-lg text-xs font-medium">
                                         {s.name}
                                         {/* Added Level display from Code B if available */}
-                                        {s.level ? ` (${s.level})` : ''} 
+                                        {s.level ? ` (${s.level})` : ''}
                                     </span>
                                 )) || <span className="text-zinc-500 text-sm">No skills listed.</span>}
                             </div>
@@ -294,7 +313,7 @@ export default function PublicProfile() {
 
                         {/* Verified Platforms */}
                         <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.2 }} className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-6 rounded-3xl">
-                            <h3 className="font-bold mb-4 flex items-center gap-2 text-zinc-100"><ShieldCheck className="w-5 h-5 text-green-400"/> Verifications</h3>
+                            <h3 className="font-bold mb-4 flex items-center gap-2 text-zinc-100"><ShieldCheck className="w-5 h-5 text-green-400" /> Verifications</h3>
                             <div className="space-y-3">
                                 {user.connected_accounts?.github && (
                                     <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded-xl border border-white/5">
@@ -315,16 +334,16 @@ export default function PublicProfile() {
                     {/* MAIN TAB CONTENT */}
                     <div className="lg:col-span-2">
                         <AnimatePresence mode="wait">
-                            
+
                             {/* OVERVIEW TAB */}
                             {activeTab === 'overview' && (
                                 <motion.div key="overview" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-6">
                                     {/* Education Highlight */}
                                     {isVisible('education') && user.education?.length > 0 && (
                                         <div className="bg-zinc-900/50 backdrop-blur-xl border border-white/5 p-8 rounded-3xl">
-                                            <h3 className="font-bold mb-6 flex items-center gap-2 text-xl"><GraduationCap className="w-6 h-6 text-blue-400"/> Latest Education</h3>
+                                            <h3 className="font-bold mb-6 flex items-center gap-2 text-xl"><GraduationCap className="w-6 h-6 text-blue-400" /> Latest Education</h3>
                                             <div className="relative border-l border-zinc-700 ml-3 space-y-8 pl-8 py-2">
-                                                {user.education.filter((e:any) => e.is_visible).slice(0, 2).map((edu:any, i:number) => (
+                                                {user.education.filter((e: any) => e.is_visible).slice(0, 2).map((edu: any, i: number) => (
                                                     <div key={i} className="relative">
                                                         <div className="absolute -left-[39px] top-1 w-5 h-5 bg-black border-4 border-blue-500 rounded-full"></div>
                                                         <h4 className="text-lg font-bold text-white">{edu.institute}</h4>
@@ -340,6 +359,65 @@ export default function PublicProfile() {
                                 </motion.div>
                             )}
 
+                            {/* NEW: PROJECTS TAB (Highlights) */}
+                            {activeTab === 'projects' && (
+                                <motion.div key="projects" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 gap-6">
+                                    {highlights.length > 0 ? (
+                                        highlights.map((p) => (
+                                            <div key={p.id || p._id} className="bg-zinc-900/50 border border-white/5 p-8 rounded-[2rem] group hover:border-blue-500/30 transition-all relative overflow-hidden">
+                                                {/* Decorative Background Icon */}
+                                                <div className="absolute -right-6 -top-6 p-8 opacity-[0.03] group-hover:opacity-10 transition-opacity transform rotate-12">
+                                                    <Layout className="w-48 h-48 text-blue-500" />
+                                                </div>
+
+                                                <div className="relative z-10">
+                                                    <div className="flex justify-between items-start mb-6">
+                                                        <div className="space-y-2">
+                                                            <h3 className="text-2xl font-bold text-white group-hover:text-blue-400 transition">{p.name}</h3>
+                                                            <div className="flex items-center gap-3 text-xs font-bold tracking-wider">
+                                                                <span className={`px-3 py-1 rounded-full border ${p.status === 'planning' ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-500' : 'bg-green-500/10 border-green-500/20 text-green-500'}`}>
+                                                                    {p.status}
+                                                                </span>
+                                                                <span className="text-zinc-500 flex items-center gap-1">
+                                                                    <ShieldCheck className="w-3 h-3" /> {p.members?.length || 1} Members
+                                                                </span>
+                                                            </div>
+                                                        </div>
+
+                                                        <button
+                                                            onClick={() => router.push(`/teams/${p.id || p._id}`)}
+                                                            className="px-6 py-3 bg-white text-black rounded-xl font-bold text-sm hover:bg-blue-500 hover:text-white transition shadow-lg shadow-white/5 flex items-center gap-2"
+                                                        >
+                                                            View Project <ArrowLeft className="w-4 h-4 rotate-180" />
+                                                        </button>
+                                                    </div>
+
+                                                    <p className="text-zinc-400 text-sm leading-relaxed mb-8 line-clamp-3 max-w-2xl">
+                                                        {p.description}
+                                                    </p>
+
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {p.needed_skills?.map((s: string, idx: number) => (
+                                                            <span key={idx} className="text-xs bg-black/40 border border-white/10 px-4 py-2 rounded-xl text-zinc-300 font-medium">
+                                                                {s}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="text-center py-24 bg-zinc-900/30 rounded-[2.5rem] border border-dashed border-zinc-800">
+                                            <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center mx-auto mb-6 border border-zinc-800">
+                                                <Layout className="w-8 h-8 text-zinc-600" />
+                                            </div>
+                                            <h3 className="text-lg font-bold text-white mb-2">No Projects Highlighted</h3>
+                                            <p className="text-zinc-500 text-sm">This user hasn't selected any featured work yet.</p>
+                                        </div>
+                                    )}
+                                </motion.div>
+                            )}
+
                             {/* STATS TAB */}
                             {activeTab === 'stats' && (
                                 <motion.div key="stats" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -347,7 +425,7 @@ export default function PublicProfile() {
                                     {isVisible('codeforces') && user.platform_stats?.codeforces && (
                                         <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-yellow-500/20 p-6 rounded-3xl relative overflow-hidden group">
                                             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition"><Code className="w-24 h-24" /></div>
-                                            <h3 className="text-yellow-400 font-bold mb-4 flex items-center gap-2"><Code className="w-5 h-5"/> Codeforces</h3>
+                                            <h3 className="text-yellow-400 font-bold mb-4 flex items-center gap-2"><Code className="w-5 h-5" /> Codeforces</h3>
                                             <div className="space-y-4 relative z-10">
                                                 <div>
                                                     <div className="text-3xl font-black text-white">{user.platform_stats.codeforces.rating}</div>
@@ -365,7 +443,7 @@ export default function PublicProfile() {
                                     {isVisible('leetcode') && user.platform_stats?.leetcode && (
                                         <div className="bg-gradient-to-br from-zinc-900 to-zinc-950 border border-orange-500/20 p-6 rounded-3xl relative overflow-hidden group">
                                             <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition"><Code2 className="w-24 h-24" /></div>
-                                            <h3 className="text-orange-400 font-bold mb-4 flex items-center gap-2"><Code2 className="w-5 h-5"/> LeetCode</h3>
+                                            <h3 className="text-orange-400 font-bold mb-4 flex items-center gap-2"><Code2 className="w-5 h-5" /> LeetCode</h3>
                                             <div className="space-y-4 relative z-10">
                                                 <div>
                                                     <div className="text-3xl font-black text-white">{user.platform_stats.leetcode.total_solved}</div>
@@ -383,7 +461,7 @@ export default function PublicProfile() {
                                     {/* Github Detailed */}
                                     {githubDetails.length > 0 && (
                                         <div className="md:col-span-2 bg-zinc-900/50 border border-white/10 p-6 rounded-3xl">
-                                            <h3 className="font-bold mb-4 flex items-center gap-2"><Github className="w-5 h-5"/> GitHub Analytics</h3>
+                                            <h3 className="font-bold mb-4 flex items-center gap-2"><Github className="w-5 h-5" /> GitHub Analytics</h3>
                                             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                                                 {githubDetails.map((d: string, i: number) => (
                                                     <div key={i} className="bg-zinc-800/50 p-4 rounded-xl text-center">
@@ -400,8 +478,12 @@ export default function PublicProfile() {
                             {activeTab === 'reviews' && (
                                 <motion.div key="reviews" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-4">
                                     {isVisible('ratings') && user.ratings_received?.length > 0 ? (
-                                        user.ratings_received.map((r:any, i:number) => (
-                                            <div key={i} className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl hover:border-white/10 transition">
+                                        user.ratings_received.map((r: any, i: number) => (
+                                            <div
+                                                key={i}
+                                                onClick={() => setExpandedRating(expandedRating === i ? null : i)}
+                                                className="bg-zinc-900/50 border border-white/5 p-6 rounded-2xl hover:border-white/10 transition cursor-pointer"
+                                            >
                                                 <div className="flex justify-between items-start mb-3">
                                                     <div>
                                                         <h4 className="font-bold text-white text-lg">{r.project_name}</h4>
@@ -413,8 +495,35 @@ export default function PublicProfile() {
                                                     </div>
                                                 </div>
                                                 <p className="text-zinc-300 italic mb-4">"{r.explanation}"</p>
-                                                <div className="flex items-center gap-2 text-xs text-green-400 font-mono">
-                                                    <ShieldCheck className="w-3 h-3" /> Verified Collaborator
+
+                                                {/* EXPANDABLE BREAKDOWN */}
+                                                <AnimatePresence>
+                                                    {expandedRating === i && (
+                                                        <motion.div
+                                                            initial={{ height: 0, opacity: 0 }}
+                                                            animate={{ height: "auto", opacity: 1 }}
+                                                            exit={{ height: 0, opacity: 0 }}
+                                                            className="mb-4 pt-4 border-t border-white/5 overflow-hidden"
+                                                        >
+                                                            <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                                                {Object.entries(r.breakdown || {}).map(([key, val]: any) => (
+                                                                    <div key={key} className="bg-zinc-800/50 p-2 rounded-lg flex justify-between items-center">
+                                                                        <span className="text-[10px] text-zinc-400 capitalize">{key.replace('_', ' ')}</span>
+                                                                        <span className="text-xs font-bold text-white">{val}</span>
+                                                                    </div>
+                                                                ))}
+                                                            </div>
+                                                        </motion.div>
+                                                    )}
+                                                </AnimatePresence>
+
+                                                <div className="flex items-center justify-between mt-2">
+                                                    <div className="flex items-center gap-2 text-xs text-green-400 font-mono">
+                                                        <ShieldCheck className="w-3 h-3" /> Verified Collaborator
+                                                    </div>
+                                                    <div className="text-zinc-600">
+                                                        {expandedRating === i ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                                                    </div>
                                                 </div>
                                             </div>
                                         ))
@@ -435,7 +544,7 @@ export default function PublicProfile() {
             <AnimatePresence>
                 {showEmailModal && (
                     <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4 backdrop-blur-md">
-                        <motion.div 
+                        <motion.div
                             initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
                             className="bg-zinc-900 border border-zinc-700 p-8 rounded-3xl w-full max-w-lg shadow-2xl relative"
                         >
@@ -444,13 +553,13 @@ export default function PublicProfile() {
                             <p className="text-sm text-zinc-400 mb-8">Securely contact <span className="text-white font-bold">{user.username}</span>. Your email address remains hidden.</p>
 
                             <div className="space-y-5">
-                                <input 
+                                <input
                                     className="w-full bg-black/50 border border-zinc-700 rounded-xl p-4 text-white outline-none focus:border-purple-500 transition placeholder:text-zinc-600"
                                     placeholder="Subject"
                                     value={emailSubject}
                                     onChange={(e) => setEmailSubject(e.target.value)}
                                 />
-                                <textarea 
+                                <textarea
                                     className="w-full bg-black/50 border border-zinc-700 rounded-xl p-4 text-white h-40 outline-none focus:border-purple-500 transition resize-none placeholder:text-zinc-600"
                                     placeholder="Write your message here..."
                                     value={emailBody}
