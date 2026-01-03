@@ -12,7 +12,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
 
 from app.models import ChatMessage, Team, DeletionRequest, Notification, Task, User, CompletionRequest, MemberRequest, Match, ExtensionRequest
-from app.services.recommendation_service import search_vectors
+from app.services.recommendation_service import search_vectors, sync_data_to_chroma
 from app.services.vector_store import generate_embedding, calculate_similarity
 
 INTENT_EXAMPLES = {
@@ -60,6 +60,15 @@ INTENT_EXAMPLES = {
     "SEND_MESSAGE": [
         "send a message", "tell the team", "broadcast an announcement", "message him", 
         "notify everyone", "send a dm to Alice", "announcement: meeting starts now"
+    ],
+    "MANAGE_RECRUITMENT": [
+        "stop recruiting", "close applications", "open recruitment", 
+        "start looking for members", "we are full", "open spots available",
+        "pause hiring", "resume applications"
+    ],
+    "UPDATE_CAPACITY": [
+        "increase team size to 6", "limit team to 3 people", "set max members to 5",
+        "change capacity to 4", "we need more people, make it 10", "reduce team size"
     ],
     "CODE_REQUEST": [
         "write python code", "fix this bug", "debug this function", "how do I code this", 
@@ -261,6 +270,8 @@ async def router_node(state: AgentState):
     - DAILY_BRIEFING (User wants a summary of notifications)
     - ANALYZE_TEAM (User asks about skills, hiring gaps, or roster balance)
     - SEND_MESSAGE (User wants to broadcast/DM someone)
+    - MANAGE_RECRUITMENT (User wants to open/close recruitment for a project)
+    - UPDATE_CAPACITY (User wants to change the max number of members)
     - CODE_REQUEST (User asks for code generation or debugging)
     - SEARCH_REQUEST (User is looking for *Projects* to join)
     - PROJECT_QUERY (User asks about *Data/Workload* - e.g., "Who is busy?", "Task status")
@@ -481,15 +492,12 @@ async def manager_node(state: AgentState):
             pass
 
     if not target_team:
-        return {"final_response": f"I'm not sure which project you mean. I can see these projects: **{', '.join([t.name for t in relevant_teams])}**"}
-    
-    # Check locked status
-    if target_team.status == "completed" and intent != "DELETE_PROJECT":
-        return {"final_response": f"❌ Project **{target_team.name}** is already completed and locked."}
-
-    if not target_team:
-        # 🔥 NEW: Instructional Error Message
-        action_instruction = ""
+        # 1. Prepare list of valid projects
+        project_list = ', '.join([t.name for t in relevant_teams])
+        
+        # 2. Determine specific instruction based on Intent
+        action_instruction = "Manage [Project Name]"
+        
         if intent == "DELETE_PROJECT": 
             action_instruction = "Delete [Project Name]"
         elif intent == "COMPLETE_PROJECT": 
@@ -506,12 +514,22 @@ async def manager_node(state: AgentState):
             action_instruction = "Analyze team [Project Name]"
         elif intent == "SEND_MESSAGE": 
             action_instruction = "Tell [Name] in [Project Name] to [Message]"
-        else:
-            action_instruction = "Manage [Project Name]"
+        elif intent == "MANAGE_RECRUITMENT": 
+            action_instruction = "Open/Close recruitment for [Project Name]"
+        elif intent == "UPDATE_CAPACITY": 
+            action_instruction = "Set team size for [Project Name]"
 
+        # 3. Return combined helpful response
         return {
-            "final_response": f"I'm not sure which project you mean. Please try again with the full command:\n\n👉 **'{action_instruction}'**"
+            "final_response": (
+                f"I'm not sure which project you mean. I can see these projects: **{project_list}**\n\n"
+                f"Please try again with the full command:\n👉 **'{action_instruction}'**"
+            )
         }
+    
+        # Check locked status
+    if target_team.status == "completed" and intent != "DELETE_PROJECT":
+        return {"final_response": f"❌ Project **{target_team.name}** is already completed and locked."}
 
     # --- BRANCH A: DELETE PROJECT ---
     if intent == "DELETE_PROJECT":
@@ -684,8 +702,12 @@ async def manager_node(state: AgentState):
         # Check for duplicate active votes
         existing = next((r for r in target_team.member_requests if r.target_user_id == target_id and r.is_active), None)
         if existing:
-            return {"final_response": f"⚠️ A vote to remove <@{target_id}> is already active."}
-
+            # --- FIX: Fetch Name for Display ---
+            target_user_obj = await User.get(target_id)
+            target_name = target_user_obj.username if target_user_obj else "Unknown Member"
+            
+            return {"final_response": f"⚠️ A vote to remove **{target_name}** is already active."}
+        
         # 4. START VOTE (The Only Path Now)
         # We removed the 'planning' check, so this runs for everyone.
         req = MemberRequest(
@@ -713,10 +735,20 @@ async def manager_node(state: AgentState):
                 ).insert()
                 count += 1
 
-        return {"final_response": f"🗳️ **Vote Initiated.** I've started a vote to remove <@{target_id}>. {count} other members have been notified."}    
+        target_user_obj = await User.get(target_id)
+        target_name = target_user_obj.username if target_user_obj else "Unknown Member"
+        return {"final_response": f"🗳️ **Vote Initiated.** I've started a vote to remove **{target_name}**. {count} other members have been notified."}    
     
     # --- BRANCH F: ASSIGN TASK ---
     if intent == "ASSIGN_TASK":
+        if target_team.status == "planning":
+            return {
+                "final_response": (
+                    f"❌ **Cannot Assign Task**\n\n"
+                    f"The project **{target_team.name}** is still in the **Planning** phase.\n"
+                    "You can only assign tasks once the project has officially started and is **Active**."
+                )
+            }
         # 1. Build Member List
         members_map = []
         for m_id in target_team.members:
@@ -787,7 +819,10 @@ async def manager_node(state: AgentState):
                     related_id=str(target_team.id)
                 ).insert()
 
-            return {"final_response": f"✅ **Task Assigned!**\n\n📝 **{data['description']}**\n👤 Assignee: <@{assignee}>\n📅 Deadline: {new_task.deadline.strftime('%Y-%m-%d')}"}
+            assignee_obj = await User.get(assignee)
+            assignee_name = assignee_obj.username if assignee_obj else "Unknown Member"
+
+            return {"final_response": f"✅ **Task Assigned!**\n\n📝 **{data['description']}**\n👤 Assignee: **{assignee_name}**\n📅 Deadline: {new_task.deadline.strftime('%Y-%m-%d')}"}
             
         except json.JSONDecodeError:
             print(f"JSON Parse Failed. Raw output: {raw}")
@@ -1061,6 +1096,95 @@ async def manager_node(state: AgentState):
             print(f"Analyze Error: {e}")
             return {"final_response": f"⚠️ I couldn't finish the analysis. Error: {str(e)}"}
         
+    # --- BRANCH: MANAGE RECRUITMENT (Team Setting) ---
+    if intent == "MANAGE_RECRUITMENT":
+        current_leader = str(target_team.leader_id).strip() if target_team.leader_id else ""
+        current_user = str(user_id).strip()
+        
+        if current_leader != current_user:
+             # Debugging: Print to console so you can see what went wrong
+             print(f"❌ LEADER MISMATCH: Project Leader '{current_leader}' vs User '{current_user}'")
+             return {"final_response": f"❌ **Permission Denied.**\n\nOnly the **Team Leader** can change recruitment status.\n(Current Leader ID: `{current_leader}`)"}
+
+        # 2. Determine desired state (Open vs Close)
+        # We look for keywords in the user's input to decide the action.
+        text = state["question"].lower()
+        should_open = any(word in text for word in ["open", "start", "resume", "looking"])
+        should_close = any(word in text for word in ["stop", "close", "pause", "full"])
+        
+        if should_open:
+            target_team.is_looking_for_members = True
+            await target_team.save()
+            await sync_data_to_chroma()
+            msg = f"✅ **Recruitment Opened!**\n\n**{target_team.name}** is now visible in the Marketplace. Users can find and apply to your team."
+        elif should_close:
+            target_team.is_looking_for_members = False
+            await target_team.save()
+            await sync_data_to_chroma()
+            msg = f"🚫 **Recruitment Paused.**\n\n**{target_team.name}** is now hidden from the Marketplace. No new applications will be received."
+        else:
+            # Fallback if the user just asked "Is recruitment open?"
+            status = "Open" if target_team.is_looking_for_members else "Closed"
+            return {"final_response": f"ℹ️ Recruitment is currently **{status}**.\n\nTo change it, say **'Stop recruiting'** or **'Open recruitment'**."}
+            
+        return {"final_response": msg}
+
+    # --- BRANCH: UPDATE CAPACITY ---
+    if intent == "UPDATE_CAPACITY":
+        current_leader = str(target_team.leader_id).strip() if target_team.leader_id else ""
+        current_user = str(user_id).strip()
+        
+        if current_leader != current_user:
+             # Debugging: Print to console so you can see what went wrong
+             print(f"❌ LEADER MISMATCH: Project Leader '{current_leader}' vs User '{current_user}'")
+             return {"final_response": f"❌ **Permission Denied.**\n\nOnly the **Team Leader** can change recruitment status.\n(Current Leader ID: `{current_leader}`)"}
+
+        # 2. Extract Number
+        match = re.search(r'\b(\d+)\b', state["question"])
+        if not match:
+            return {"final_response": f"🔢 Please specify a number. (e.g., 'Increase by 1' or 'Set to 6')\nCurrent size: {target_team.target_members}"}
+            
+        value = int(match.group(1))
+        current_size = target_team.target_members
+        text = state["question"].lower()
+
+        # 3. Determine Logic (Relative vs Absolute)
+        # Check if the user said "by" (e.g., "increase by 2") OR implied addition ("add 2 spots")
+        is_relative_add = " by " in text or " add " in text or " more " in text
+        is_relative_sub = " decrease " in text or " reduce " in text or " remove " in text
+        
+        # However, "Increase TO 6" is absolute. "to" usually overrides "by".
+        is_absolute = " to " in text or " set " in text or " make " in text
+
+        if is_absolute:
+            new_size = value
+        elif is_relative_add:
+            new_size = current_size + value
+        elif is_relative_sub:
+            new_size = current_size - value
+        else:
+            # Default to absolute if unclear (e.g., "Team size 5")
+            new_size = value
+
+        # 4. Validation bounds
+        if new_size < 2:
+            return {"final_response": f"⚠️ A team must have at least 2 members. (Calculated size: {new_size})"}
+        if new_size > 20:
+             return {"final_response": f"⚠️ Maximum team size is 20. (Calculated size: {new_size})"}
+        
+        # 5. Save & Respond
+        target_team.target_members = new_size
+        await target_team.save()
+        await sync_data_to_chroma()
+        
+        return {
+            "final_response": (
+                f"✅ **Team Capacity Updated!**\n"
+                f"Previous: {current_size} → **New Limit: {new_size}**\n"
+                f"**{target_team.name}** is now looking for a total of {new_size} members."
+            )
+        }
+
 async def coder_node(state: AgentState):
     """Handles Coding Requests with Context."""
     print("🔧 Coder Node Active")
@@ -1483,7 +1607,7 @@ def route_decision(state):
     i = state["intent"]
     if i == "CREATE_PROJECT": return "planner"
     if i == "PROJECT_QUERY": return "data_analyst"
-    if i in ["DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER", "ASSIGN_TASK", "EXTEND_DEADLINE", "SHOW_TASKS", "SEND_MESSAGE", "DAILY_BRIEFING", "ANALYZE_TEAM"]: return "manager"
+    if i in ["DELETE_PROJECT", "COMPLETE_PROJECT", "LEAVE_TEAM", "REMOVE_MEMBER", "ASSIGN_TASK", "EXTEND_DEADLINE", "SHOW_TASKS", "SEND_MESSAGE", "DAILY_BRIEFING", "ANALYZE_TEAM", "MANAGE_RECRUITMENT", "UPDATE_CAPACITY"]: return "manager"
     if i == "CODE_REQUEST": return "coder"
     if i == "SEARCH_REQUEST": return "searcher"
     return "chatter"
