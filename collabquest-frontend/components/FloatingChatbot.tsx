@@ -29,7 +29,7 @@ export default function FloatingChatbot() {
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
         onClick={() => setOpen(!open)}
-        className={`fixed bottom-7 right-7 z-[9999] p-4 rounded-full shadow-2xl transition-all duration-300 flex items-center justify-center border border-zinc-700 ${
+        className={`fixed bottom-12 right-4 z-[9999] p-4 rounded-full shadow-2xl transition-all duration-300 flex items-center justify-center border border-zinc-700 ${
             open 
             ? "bg-zinc-800 text-zinc-400 rotate-90 hover:text-white" 
             : "bg-indigo-600 text-white hover:bg-indigo-500 hover:shadow-indigo-500/50"
