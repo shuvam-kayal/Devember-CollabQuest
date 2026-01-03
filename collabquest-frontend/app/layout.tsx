@@ -19,12 +19,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
-      <body className={inter.className}>
-        {/* TTS Listener acts globally here */}
+      <body className={`${inter.className} min-h-screen flex flex-col bg-black text-white`}>
         <SelectionTTS />
-        {/* Global floating chatbot */}
         <FloatingChatbot />   
-        {children}
+        <div className="flex-grow relative">
+            {children}
+        </div>
+
         <Footer />
       </body>
     </html>

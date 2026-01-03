@@ -162,6 +162,10 @@ def has_active_vote(team: Team) -> bool:
     if any(r.is_active for r in team.member_requests): return True
     return False
 
+async def clear_swipes(user_id: str, team_id: str, leader_id: str):
+    await Swipe.find(Swipe.swiper_id == user_id, Swipe.target_id == team_id).delete()
+    await Swipe.find(Swipe.swiper_id == leader_id, Swipe.target_id == user_id).delete()
+
 @router.post("/", response_model=Team)
 async def create_team(team_data: TeamCreate, current_user: User = Depends(get_current_user)):
     skills_to_embed = team_data.active_needed_skills if team_data.active_needed_skills else team_data.needed_skills
@@ -362,6 +366,8 @@ async def reject_invite(team_id: str, req: InviteRequest, current_user: User = D
         match_record.status = "rejected"
         match_record.rejected_by = str(current_user.id)
         await match_record.save()
+
+    await clear_swipes(candidate_id, team_id, leader_id)
         
     if is_leader:
          await Notification.find(Notification.recipient_id == leader_id, Notification.sender_id == candidate_id, Notification.type == "join_request", Notification.related_id == team_id).update({"$set": {"action_status": "rejected", "is_read": True}})
@@ -394,10 +400,8 @@ async def remove_member(team_id: str, user_id: str, current_user: User = Depends
         if team.completion_request and user_id in team.completion_request.votes:
             del team.completion_request.votes[user_id]
         await team.save()
-        match_record = await Match.find_one(Match.user_id == user_id, Match.project_id == team_id)
-        if match_record:
-            match_record.status = "matched"
-            await match_record.save()
+        await Match.find(Match.user_id == user_id, Match.project_id == team_id).delete()
+        await clear_swipes(user_id, team_id, leader_id)
     return team
 
 # --- TASKS ---
@@ -700,6 +704,7 @@ async def leave_project(team_id: str, req: ActionWithExplanation, current_user: 
         await Notification(recipient_id=leader_id, sender_id=uid, message=f"{current_user.username} left the team. Reason: {req.explanation}", type="info").insert()
         await manager.send_personal_message({"event": "dashboardUpdate"}, leader_id)
         await Match.find(Match.project_id == team_id, Match.user_id == uid).delete()
+        await clear_swipes(uid, team_id, leader_id)
         return {"status": "left"}
     else:
         request = MemberRequest(target_user_id=uid, type="leave", explanation=req.explanation, initiator_id=uid, votes={})
@@ -790,6 +795,7 @@ async def vote_member_request(team_id: str, request_id: str, vote: VoteRequest, 
         if target_id in team.members:
             team.members.remove(target_id)
             await Match.find(Match.project_id == team_id, Match.user_id == target_id).delete()
+            await clear_swipes(target_id, team_id, leader_id)
             action_text = "left" if req.type == "leave" else "removed from"
             await Notification(recipient_id=target_id, sender_id=leader_id, message=f"You have {action_text} {team.name}.", type="info").insert()
             for m_id in team.members:
