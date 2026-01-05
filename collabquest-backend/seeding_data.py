@@ -207,13 +207,14 @@ async def seed():
                 rating_count=random.randint(1, 100),
                 is_verified_student=True,
                 auth_method="github",
-                about=f"{bio}. woking on {sched_type} schedule.",
+                about=f"{bio}. working on {sched_type} schedule.",
                 skills=my_skills,
                 interests=my_interests,
                 availability=my_avail,
                 is_looking_for_team=True, # Explicitly set
                 
                 # --- NEW FIELDS ---
+                full_name=name, # Set full_name same as username for now as per plan
                 trust_score_breakdown=TrustBreakdown(
                     base=5.0,
                     github=random.uniform(0, 1.0),
@@ -223,6 +224,8 @@ async def seed():
                     details=["Verified Student", "Active on GitHub"]
                 ),
                 education=generate_education(),
+                school="Unknown University", # Placeholder as education list is complex to parse back immediately
+                age=str(random.randint(18, 25)),
                 achievements=generate_achievements(),
                 social_links=[
                     Link(platform="twitter", url=f"https://twitter.com/{name}"),
@@ -244,7 +247,8 @@ async def seed():
                     "leetcode": {"solved": 200, "rank": 15000}
                 },
                 connections=[], # To be filled later if needed
-                embedding=[] # Initialize empty, will be generated if they login/update
+                embedding=[], # Initialize empty, will be generated if they login/update
+                is_onboarded=True
             )
             
             # Upsert
@@ -289,6 +293,7 @@ async def seed():
                 is_looking_for_members=True,
                 
                 # --- NEW FIELDS ---
+                leader_id=str(leader.id),
                 target_completion_date=datetime.now() + timedelta(days=random.randint(30, 90)),
                 status="planning",
                 target_members=random.randint(3, 6),
