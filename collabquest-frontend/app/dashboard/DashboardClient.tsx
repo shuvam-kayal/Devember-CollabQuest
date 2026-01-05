@@ -10,9 +10,8 @@ import {
     MessageSquare, CheckCircle,
     Briefcase, Send, Code2, Mail, Clock, XCircle, RotateCcw, Check, Trash2,
     Calendar, Layout, Award, Star,
-    // Sidebar specific icons
     ChevronLeft, ChevronRight, LayoutDashboard, Users, Settings, LogOut,
-    Network, Sparkles, ArrowUpRight
+    Network, Sparkles, ArrowUpRight, Rocket, TrendingUp
 } from "lucide-react";
 import Link from "next/link";
 import GlobalHeader from "@/components/GlobalHeader";
@@ -70,22 +69,33 @@ interface TopProject {
 }
 
 /* -------------------- STYLED COMPONENTS -------------------- */
-const GlassCard = ({ children, className = "", onClick }: any) => (
-    <div
+const DashboardCard = ({ children, className = "", onClick, glow = false }: any) => (
+    <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4 }}
         onClick={onClick}
-        className={`relative overflow-hidden rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md shadow-xl transition-all duration-300 hover:bg-white/10 hover:border-white/20 hover:shadow-purple-500/10 ${className}`}
+        className={`
+            relative overflow-hidden rounded-2xl 
+            bg-[#0D0D12] border border-white/[0.08]
+            ${glow ? 'shadow-[0_0_60px_-15px_rgba(168,85,247,0.3)]' : ''}
+            ${className}
+        `}
     >
         {children}
-    </div>
+    </motion.div>
+);
+
+const GlowOrb = ({ className = "" }: { className?: string }) => (
+    <div className={`absolute rounded-full blur-[100px] opacity-30 pointer-events-none ${className}`} />
 );
 
 const NEWS_ITEMS = [
-    { version: "v1.2.0", date: "Dec 10, 2025", title: "Real-time Chat & Video", desc: "Collaborate instantly with your team using the new chat module." },
-    { version: "v1.1.5", date: "Dec 23, 2025", title: "Smart Matching 2.0", desc: "Improved algorithm for better skill-based team recommendations." },
-    { version: "v1.1.0", date: "Jan 02, 2026", title: "Dark Mode & UI Polish", desc: "A sleek new look for late-night coding sessions." },
+    { version: "v1.2.0", date: "Dec 10", title: "Real-time Chat", desc: "Collaborate instantly with your team.", icon: MessageSquare },
+    { version: "v1.1.5", date: "Dec 23", title: "Smart Matching", desc: "Improved algorithm for skill-based teams.", icon: Sparkles },
 ];
 
-/* -------------------- HELPER COMPONENT: SIDEBAR LINK -------------------- */
+/* -------------------- SIDEBAR COMPONENT -------------------- */
 const SidebarLink = ({
     icon: Icon,
     label,
@@ -101,27 +111,25 @@ const SidebarLink = ({
     onClick: () => void,
     id?: string
 }) => (
-    <div
+    <button
         id={id}
         onClick={onClick}
-        className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 cursor-pointer group mb-1
-        ${active
-                ? "bg-purple-600/10 text-purple-400 border border-purple-500/20"
-                : "text-gray-400 hover:bg-white/5 hover:text-white hover:border hover:border-white/5 border border-transparent"
-            }`}
+        className={`
+            w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300
+            ${active
+                ? 'bg-gradient-to-r from-purple-600/20 to-purple-500/10 text-white border border-purple-500/30 shadow-[0_0_20px_-5px_rgba(168,85,247,0.4)]'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }
+            ${isCollapsed ? 'justify-center' : ''}
+        `}
     >
-        <Icon className={`w-5 h-5 shrink-0 ${active ? "text-purple-400" : "text-gray-500 group-hover:text-white"}`} />
-
+        <Icon className={`w-5 h-5 ${active ? 'text-purple-400' : ''}`} />
         {!isCollapsed && (
-            <span className="font-medium text-sm whitespace-nowrap overflow-hidden transition-all">
+            <span className="font-medium text-sm tracking-wide">
                 {label}
             </span>
         )}
-
-        {active && !isCollapsed && (
-            <motion.div layoutId="active-pill" className="ml-auto w-1.5 h-1.5 rounded-full bg-purple-400" />
-        )}
-    </div>
+    </button>
 );
 
 /* -------------------- MAIN CONTENT COMPONENT -------------------- */
@@ -130,29 +138,22 @@ export default function DashboardClient() {
     const router = useRouter();
     const pathname = usePathname();
 
-    // --- UI STATES ---
     const [isCollapsed, setIsCollapsed] = useState(false);
     const [processingId, setProcessingId] = useState<string | null>(null);
     const [showEmailModal, setShowEmailModal] = useState(false);
 
-    // --- DATA STATES ---
     const [user, setUser] = useState<UserProfile | null>(null);
     const [projectOpportunities, setProjectOpportunities] = useState<Match[]>([]);
-
-    // Feature State
     const [activeTasks, setActiveTasks] = useState<TaskItem[]>([]);
     const [historyTasks, setHistoryTasks] = useState<TaskItem[]>([]);
     const [tasksLoading, setTasksLoading] = useState(true);
+    const [topUsers, setTopUsers] = useState<TopUser[]>([]);
+    const [topProjects, setTopProjects] = useState<TopProject[]>([]);
 
-    // --- FORM STATES ---
     const [emailRecipient, setEmailRecipient] = useState<{ id: string, name: string } | null>(null);
     const [emailSubject, setEmailSubject] = useState("");
     const [emailBody, setEmailBody] = useState("");
 
-    const [topUsers, setTopUsers] = useState<TopUser[]>([]);
-    const [topProjects, setTopProjects] = useState<TopProject[]>([]);
-
-    // --- INITIALIZATION ---
     useEffect(() => {
         const urlToken = searchParams.get("token");
         let activeToken = urlToken;
@@ -186,65 +187,38 @@ export default function DashboardClient() {
         return () => window.removeEventListener("dashboardUpdate", handleSync);
     }, [searchParams, router]);
 
-    // --- FETCHERS ---
     const fetchUserProfile = async (jwt: string) => {
         try { const response = await api.get("/users/me"); setUser(response.data); } catch (error) { Cookies.remove("token"); router.push("/"); }
     };
     const fetchMatches = async (jwt: string) => {
         try { const res = await api.get("/matches/mine"); setProjectOpportunities(res.data.filter((m: any) => m.role === "Team Leader").reverse()); } catch (e) { }
-    }
+    };
     const fetchDashboardData = async (jwt: string) => {
         try {
-            const config = {
-                headers: { Authorization: `Bearer ${jwt}` }
-            };
+            const config = { headers: { Authorization: `Bearer ${jwt}` } };
             const taskRes = await api.get("/users/me/tasks", config);
-
             setActiveTasks(taskRes.data.active);
             setHistoryTasks(taskRes.data.history);
-
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setTasksLoading(false);
-        }
-    }
-
+        } catch (e) { console.error(e); } finally { setTasksLoading(false); }
+    };
     const fetchLeaderboards = async (jwt: string) => {
         try {
-            const [uRes, pRes] = await Promise.all([
-                api.get("/users/top"),
-                api.get("/teams/top")
-            ]);
+            const [uRes, pRes] = await Promise.all([api.get("/users/top"), api.get("/teams/top")]);
             setTopUsers(uRes.data);
             setTopProjects(pRes.data);
         } catch (e) { console.error("Failed to fetch leaderboards"); }
     };
 
-    // --- ACTIONS ---
     const handleReapply = async (match: Match) => {
         const token = Cookies.get("token");
         setProcessingId(match.id + match.project_id);
         try {
-            const updateStatus = (prev: Match[]) => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "matched" as const } : m);
-            setProjectOpportunities(updateStatus);
+            setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "matched" as const } : m));
             await api.post(`/teams/${match.project_id}/reset`, { target_user_id: match.id });
             alert("Status reset! You can now apply/invite again.");
             fetchMatches(token!);
-        } catch (err) { alert("Action failed"); }
-        finally { setProcessingId(null); }
-    }
-
-    const handleDeleteMatch = async (match: Match) => {
-        if (!confirm("Remove this project? This will 'unlike' it and remove it from your list.")) return;
-        const token = Cookies.get("token");
-        const myId = user?._id || user?.id || "";
-        try {
-            setProjectOpportunities(prev => prev.filter(p => p.project_id !== match.project_id));
-            await api.delete(`/matches/delete/${match.project_id}/${myId}`);
-        } catch (e) { alert("Failed"); fetchMatches(token!); }
-    }
-
+        } catch (err) { alert("Action failed"); } finally { setProcessingId(null); }
+    };
     const handleReject = async (match: Match) => {
         if (!confirm("Are you sure you want to reject this request?")) return;
         const myId = user?._id || user?.id || "";
@@ -253,26 +227,29 @@ export default function DashboardClient() {
             await api.post(`/teams/${match.project_id}/reject`, { target_user_id: match.id });
             window.dispatchEvent(new Event("triggerNotificationRefresh"));
         } catch (err) { alert("Action failed"); }
-    }
-
-    const requestJoin = async (match: Match) => { const token = Cookies.get("token"); setProcessingId(match.id + match.project_id); try { setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "requested" as const } : m)); await api.post(`/teams/${match.project_id}/invite`, { target_user_id: "LEADER" }); setTimeout(() => fetchMatches(token!), 500); } catch (err: any) { alert("Failed"); fetchMatches(token!); } finally { setProcessingId(null); } }
-
+    };
+    const requestJoin = async (match: Match) => {
+        const token = Cookies.get("token");
+        setProcessingId(match.id + match.project_id);
+        try {
+            setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "requested" as const } : m));
+            await api.post(`/teams/${match.project_id}/invite`, { target_user_id: "LEADER" });
+            setTimeout(() => fetchMatches(token!), 500);
+        } catch (err: any) { alert("Failed"); fetchMatches(token!); } finally { setProcessingId(null); }
+    };
     const handleConnectionAction = async (match: Match) => {
         const token = Cookies.get("token");
         setProcessingId(match.id + match.project_id);
         try {
             let target = "";
             if (match.role === "Team Leader") target = await getCurrentUserId(token!);
-
             setProjectOpportunities(prev => prev.map(m => m.id === match.id && m.project_id === match.project_id ? { ...m, status: "joined" as const } : m));
             await api.post(`/teams/${match.project_id}/members`, { target_user_id: target });
             window.dispatchEvent(new Event("triggerNotificationRefresh"));
             alert("Success!");
             setTimeout(() => { fetchMatches(token!); }, 500);
-        } catch (err) { alert("Action failed"); fetchMatches(token!); }
-        finally { setProcessingId(null); }
-    }
-
+        } catch (err) { alert("Action failed"); fetchMatches(token!); } finally { setProcessingId(null); }
+    };
     const handleTaskSubmit = async (task: TaskItem) => {
         if (!confirm("Mark this task as done and submit for review?")) return;
         const token = Cookies.get("token");
@@ -282,329 +259,352 @@ export default function DashboardClient() {
             fetchDashboardData(token!);
         } catch (e) { alert("Failed to submit task"); }
     };
-
-    const openEmailComposer = (match: Match) => { setEmailRecipient({ id: match.id, name: match.name }); setShowEmailModal(true); }
-    const handleSendEmail = async () => { if (!emailRecipient) return; try { await api.post("/communication/send-email", { recipient_id: emailRecipient.id, subject: emailSubject, body: emailBody }); alert("Email sent!"); setShowEmailModal(false); setEmailSubject(""); setEmailBody(""); } catch (err) { alert("Failed"); } }
-    const getCurrentUserId = async (token: string) => { const res = await api.get("/users/me"); return res.data._id || res.data.id; }
+    const handleSendEmail = async () => {
+        if (!emailRecipient) return;
+        try {
+            await api.post("/communication/send-email", { recipient_id: emailRecipient.id, subject: emailSubject, body: emailBody });
+            alert("Email sent!");
+            setShowEmailModal(false);
+            setEmailSubject("");
+            setEmailBody("");
+        } catch (err) { alert("Failed"); }
+    };
+    const getCurrentUserId = async (token: string) => {
+        const res = await api.get("/users/me");
+        return res.data._id || res.data.id;
+    };
 
     const renderMatchButton = (match: Match) => {
         const isProcessing = processingId === (match.id + match.project_id);
-        const baseClass = "flex-1 py-1.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1 transition-all";
+        const baseClass = "flex-1 py-2.5 rounded-full text-xs font-bold flex items-center justify-center gap-2 transition-all duration-300";
 
         if (match.status === "rejected") {
             const myId = user?._id || user?.id;
             const isMe = match.rejected_by === myId;
-            const text = isMe ? "Rejected" : "Declined";
             return (
-                <div className="flex-1 flex gap-2">
-                    <div className="flex-1 bg-red-500/10 border border-red-500/20 text-red-400 py-1.5 rounded-lg text-xs font-bold text-center flex items-center justify-center gap-1">
-                        <XCircle className="w-3 h-3" /> {text}
-                    </div>
-                    <button onClick={() => handleReapply(match)} disabled={isProcessing} className="bg-white/5 hover:bg-white/10 px-2 rounded-lg text-white border border-white/10" title="Re-apply">
-                        {isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                <div className="flex gap-2">
+                    <span className="flex-1 py-2.5 rounded-full text-xs font-bold flex items-center justify-center gap-2 bg-red-500/10 text-red-400 border border-red-500/20">
+                        <XCircle className="w-3.5 h-3.5" /> {isMe ? "Rejected" : "Declined"}
+                    </span>
+                    <button onClick={() => handleReapply(match)} disabled={isProcessing} className="bg-white/5 hover:bg-white/10 px-4 rounded-full text-white border border-white/10 transition-all" title="Re-apply">
+                        <RotateCcw className="w-4 h-4" />
                     </button>
                 </div>
             );
         }
-        if (match.status === "matched") return <button onClick={() => requestJoin(match)} disabled={isProcessing} className={`${baseClass} bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20`}>{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><Send className="w-3 h-3" /> Request Join</>}</button>;
-        if (match.status === "requested") return <div className={`${baseClass} bg-white/5 border border-white/10 text-white/50 cursor-default`}><Clock className="w-3 h-3" /> Pending</div>;
-        if (match.status === "invited") return <div className="flex gap-2 flex-1"><button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className={`${baseClass} bg-green-500 hover:bg-green-400 text-black shadow-lg shadow-green-900/20`}>{isProcessing ? <Loader2 className="w-3 h-3 animate-spin" /> : <><CheckCircle className="w-3 h-3" /> Accept</>}</button><button onClick={() => handleReject(match)} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-2 rounded-lg border border-red-500/10"><XCircle className="w-3 h-3" /></button></div>;
-        if (match.status === "joined") return <div className={`${baseClass} bg-green-500/10 text-green-400 border border-green-500/20 cursor-default`}>Joined</div>;
-        return <div className="flex-1 text-white/40 text-xs text-center py-1">Status: {match.status}</div>;
+        if (match.status === "matched") return (
+            <button onClick={() => requestJoin(match)} disabled={isProcessing} className={`${baseClass} bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white shadow-[0_0_30px_-5px_rgba(168,85,247,0.5)]`}>
+                {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-3.5 h-3.5" /> Request Join</>}
+            </button>
+        );
+        if (match.status === "requested") return <div className="flex-1 py-2.5 rounded-full text-xs font-bold flex items-center justify-center gap-2 bg-yellow-500/10 text-yellow-400 border border-yellow-500/20"><Clock className="w-3.5 h-3.5" /> Pending</div>;
+        if (match.status === "invited") return (
+            <div className="flex gap-2">
+                <button onClick={() => handleConnectionAction(match)} disabled={isProcessing} className={`${baseClass} bg-gradient-to-r from-green-500 to-emerald-400 hover:from-green-400 hover:to-emerald-300 text-black shadow-[0_0_30px_-5px_rgba(34,197,94,0.5)]`}>
+                    {isProcessing ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Check className="w-3.5 h-3.5" /> Accept</>}
+                </button>
+                <button onClick={() => handleReject(match)} className="bg-red-500/10 hover:bg-red-500/20 text-red-400 px-4 rounded-full border border-red-500/20 transition-all"><X className="w-4 h-4" /></button>
+            </div>
+        );
+        if (match.status === "joined") return <div className="flex-1 py-2.5 rounded-full text-xs font-bold flex items-center justify-center gap-2 bg-green-500/10 text-green-400 border border-green-500/20"><CheckCircle className="w-3.5 h-3.5" /> Joined</div>;
+        return <div className="text-gray-500 text-xs">Status: {match.status}</div>;
     };
 
-    if (!user) return <div className="flex h-screen items-center justify-center bg-black text-white"><Loader2 className="animate-spin text-purple-500" /></div>;
+    if (!user) return (
+        <div className="min-h-screen bg-[#09090B] flex items-center justify-center">
+            <div className="flex flex-col items-center gap-4">
+                <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+                <p className="text-gray-400 text-sm">Loading your dashboard...</p>
+            </div>
+        </div>
+    );
 
     return (
-        <div className="flex h-screen bg-[#050505] text-white overflow-hidden font-sans selection:bg-purple-500/30">
-
-            {/* --- AMBIENT BACKGROUND --- */}
-            <div className="fixed inset-0 z-0 pointer-events-none">
-                <div className="absolute top-[-10%] left-[-10%] w-[500px] h-[500px] bg-purple-900/10 rounded-full blur-[120px] mix-blend-screen" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[500px] h-[500px] bg-blue-900/10 rounded-full blur-[120px] mix-blend-screen" />
+        <div className="min-h-screen bg-[#09090B] text-white overflow-hidden">
+            {/* Background Effects */}
+            <div className="fixed inset-0 pointer-events-none">
+                <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.02)_1px,transparent_1px)] bg-[size:60px_60px]" />
+                <GlowOrb className="w-[600px] h-[600px] bg-purple-600 -top-40 -right-40" />
+                <GlowOrb className="w-[400px] h-[400px] bg-purple-500 bottom-20 -left-20" />
             </div>
 
-            {/* --- SIDEBAR --- */}
-            <aside className={`${isCollapsed ? "w-20" : "w-64"} transition-all duration-300 fixed md:relative h-full border-r border-white/5 bg-[#0F0F0F] flex flex-col z-50 shrink-0`}>
-                <div className="p-6 flex items-center justify-between">
-                    {!isCollapsed && <h1 className="text-xl font-black tracking-tighter bg-gradient-to-r from-purple-500 to-pink-500 bg-clip-text text-transparent">COLLABQUEST</h1>}
-                    <button onClick={() => setIsCollapsed(!isCollapsed)} className="p-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 transition-colors">
-                        {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+            {/* Sidebar */}
+            <motion.aside
+                initial={{ x: -100, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+                className={`fixed top-0 left-0 h-screen ${isCollapsed ? 'w-20' : 'w-64'} bg-[#0D0D12]/80 backdrop-blur-xl border-r border-white/[0.06] z-50 flex flex-col transition-all duration-300`}
+            >
+                <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+                    {!isCollapsed && (
+                        <Link href="/" className="text-xl font-black bg-gradient-to-r from-purple-400 to-purple-600 bg-clip-text text-transparent">
+                            CollabQuest
+                        </Link>
+                    )}
+                    <button onClick={() => setIsCollapsed(!isCollapsed)} className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 transition-all">
+                        {isCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
                     </button>
                 </div>
 
-                <nav className="flex-1 px-4 space-y-2 overflow-hidden overflow-y-auto custom-scrollbar">
-                    <SidebarLink icon={LayoutDashboard} label="Dashboard" isCollapsed={isCollapsed} active={pathname === "/dashboard"} onClick={() => router.push("/dashboard")} />
-                    <SidebarLink icon={Users} label="Projects" isCollapsed={isCollapsed} active={pathname === "/find-team"} onClick={() => router.push("/find-team")} />
+                <nav className="flex-1 p-4 space-y-2">
+                    <SidebarLink icon={LayoutDashboard} label="Dashboard" isCollapsed={isCollapsed} active={pathname === "/dashboard"} onClick={() => router.push("/dashboard")} id="nav-dashboard" />
+                    <SidebarLink icon={Users} label="Find Team" isCollapsed={isCollapsed} active={pathname === "/find-team"} onClick={() => router.push("/find-team")} id="nav-find-team" />
 
-                    {!isCollapsed && <p className="text-[10px] text-gray-500 uppercase px-2 pt-4 mb-2 font-bold tracking-widest">Personal</p>}
+                    {!isCollapsed && <p className="text-[10px] font-bold text-gray-500 uppercase tracking-widest pt-6 pb-2 px-2">Personal</p>}
 
-                    <SidebarLink icon={Code2} label="My Projects" isCollapsed={isCollapsed} active={pathname.startsWith("/myproject")} onClick={() => router.push("/myproject")} />
-                    <SidebarLink icon={Star} label="Saved" isCollapsed={isCollapsed} active={pathname.includes("saved")} onClick={() => router.push("/saved")} />
-                    <SidebarLink icon={Globe} label="Network" isCollapsed={isCollapsed} active={pathname.includes("Network")} onClick={() => router.push("/network")} />
+                    <SidebarLink icon={Briefcase} label="My Projects" isCollapsed={isCollapsed} active={pathname === "/myproject"} onClick={() => router.push("/myproject")} />
+                    <SidebarLink icon={Star} label="Saved" isCollapsed={isCollapsed} active={pathname === "/saved"} onClick={() => router.push("/saved")} />
+                    <SidebarLink icon={Network} label="Network" isCollapsed={isCollapsed} active={pathname === "/network"} onClick={() => router.push("/network")} />
                 </nav>
 
-                <div onClick={() => router.push("/profile")} className="p-4 border-t border-white/5 bg-black/20 cursor-pointer hover:bg-white/5 transition-all mt-auto">
+                <div onClick={() => router.push("/profile")} className="p-4 border-t border-white/[0.06] bg-gradient-to-r from-purple-600/5 to-transparent cursor-pointer hover:from-purple-600/10 transition-all">
                     <div className="flex items-center gap-3">
-                        <img src={user.avatar_url || "https://github.com/shadcn.png"} className="w-9 h-9 rounded-lg border border-purple-500/50 object-cover shrink-0" />
+                        <img src={user.avatar_url || "/default-avatar.png"} alt="Avatar" className="w-10 h-10 rounded-full border-2 border-purple-500/50 object-cover" />
                         {!isCollapsed && (
-                            <div className="flex-1 overflow-hidden">
-                                <p className="text-sm font-bold truncate">{user.username}</p>
-                                <p className="text-[10px] text-green-400 font-mono">TRUST {user.trust_score?.toFixed(1) || "N/A"}</p>
+                            <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-sm truncate">{user.username}</p>
+                                <p className="text-[10px] text-purple-400 font-medium">TRUST: {user.trust_score?.toFixed(0) || "N/A"}</p>
                             </div>
                         )}
                         {!isCollapsed && <Settings className="w-4 h-4 text-gray-500" />}
                     </div>
                 </div>
-            </aside>
-            {/* --- END SIDEBAR --- */}
+            </motion.aside>
 
-
-            {/* --- MAIN CONTENT --- */}
-            <div className={`flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300 z-10`}>
-                <div className="shrink-0 bg-black/20 backdrop-blur-sm border-b border-white/5 relative z-50">
+            {/* Main Content */}
+            <main className={`${isCollapsed ? 'ml-20' : 'ml-64'} transition-all duration-300 min-h-screen`}>
+                <header className="sticky top-0 z-40 bg-[#09090B]/80 backdrop-blur-xl border-b border-white/[0.06] px-8 py-4">
                     <GlobalHeader />
-                </div>
+                </header>
 
-                <main className="flex-1 overflow-y-auto p-4 md:p-8 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:'none'] [scrollbar-width:'none']">
-                    <div className="max-w-[1600px] mx-auto space-y-10 pb-20">
-
-                        {/* 1. HERO SECTION */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <Link href="/profile" className="block h-full">
-                                <GlassCard className="p-8 h-full flex items-center gap-6 group cursor-pointer relative">
-                                    <div className="absolute inset-0 bg-gradient-to-r from-purple-500/10 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-                                    <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity bg-white/10 p-2 rounded-full"><Edit2 className="w-4 h-4 text-purple-300" /></div>
-
-                                    <img src={user.avatar_url} alt="Avatar" className="w-20 h-20 rounded-full border-2 border-purple-500 shadow-lg shadow-purple-500/20 object-cover" />
-                                    <div className="relative z-10">
-                                        <h2 className="text-2xl font-bold text-white mb-2">Welcome back, {user.username}!</h2>
-                                        <div className="flex flex-wrap gap-2">
-                                            {user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => (
-                                                <span key={i} className="text-xs bg-white/10 px-3 py-1 rounded-full text-white/70 border border-white/5">{s.name}</span>
-                                            )) : <span className="text-xs text-yellow-400/80 italic flex items-center gap-1"><Plus className="w-3 h-3" /> Add skills to profile</span>}
-                                        </div>
+                <div className="p-8 space-y-8">
+                    {/* Hero Section */}
+                    <DashboardCard glow className="p-8">
+                        <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
+                            <div className="flex items-center gap-5">
+                                <div className="relative">
+                                    <img src={user.avatar_url || "/default-avatar.png"} alt="Avatar" className="w-20 h-20 rounded-2xl object-cover border-2 border-purple-500/50" />
+                                    <div className="absolute -bottom-2 -right-2 w-6 h-6 bg-green-500 rounded-full border-4 border-[#0D0D12]" />
+                                </div>
+                                <div>
+                                    <p className="text-gray-400 text-sm">Welcome back,</p>
+                                    <h1 className="text-3xl font-black text-white">{user.username}</h1>
+                                    <div className="flex gap-2 mt-2">
+                                        {user.skills.length > 0 ? user.skills.slice(0, 3).map((s, i) => (
+                                            <span key={i} className="px-3 py-1 text-xs font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-full">{s.name}</span>
+                                        )) : <span className="text-gray-500 text-xs">Add skills to profile</span>}
                                     </div>
-                                </GlassCard>
-                            </Link>
+                                </div>
+                            </div>
 
-                            <GlassCard className="p-8 h-full flex flex-col justify-center items-start relative overflow-hidden">
-                                <div className="absolute top-[-50%] right-[-10%] w-[200px] h-[200px] bg-blue-500/20 rounded-full blur-[60px]" />
-                                <div className="relative z-10 w-full">
-                                    <h2 className="text-2xl font-bold text-white mb-2 flex items-center gap-2">
-                                        Build Your Dream Team <Sparkles className="w-5 h-5 text-yellow-400 fill-yellow-400" />
-                                    </h2>
-                                    <p className="text-white/60 mb-6 text-sm">Got an idea? Post it now and match with talented developers instantly.</p>
-                                    <Link href="/find-team">
-                                        <button className="w-full sm:w-auto px-6 py-3 bg-white text-black font-bold rounded-xl hover:bg-purple-50 transition shadow-lg shadow-white/10 flex items-center justify-center gap-2 group">
-                                            <Plus className="w-4 h-4 group-hover:rotate-90 transition-transform" /> Create Project
-                                        </button>
+                            <div className="text-center lg:text-left flex-1 max-w-xl">
+                                <h2 className="text-2xl lg:text-3xl font-black">
+                                    Find your <span className="bg-gradient-to-r from-purple-400 to-purple-600 bg-clip-text text-transparent">dream team</span>
+                                </h2>
+                                <p className="text-gray-400 mt-2 text-sm">Join thousands of students building amazing projects. Your next big idea starts here.</p>
+                                <div className="flex gap-3 mt-4 justify-center lg:justify-start">
+                                    <Link href="/create-project" className="px-6 py-3 bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white font-bold rounded-full flex items-center gap-2 shadow-[0_0_30px_-5px_rgba(168,85,247,0.5)] transition-all">
+                                        <Rocket className="w-4 h-4" /> Create Project
+                                    </Link>
+                                    <Link href="/explore" className="px-6 py-3 bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium rounded-full transition-all">
+                                        Browse Ideas
                                     </Link>
                                 </div>
-                            </GlassCard>
+                            </div>
                         </div>
+                    </DashboardCard>
 
-                        {/* 2. SPLIT LAYOUT */}
-                        <div className="grid grid-cols-1 xl:grid-cols-3 gap-8 items-start">
-
-                            {/* --- LEFT COLUMN: ACTIVE TASKS & NEWS --- */}
-                            <div className="xl:col-span-2 w-full space-y-8">
-
-                                {/* EXISTING ACTIVE TASKS BLOCK (Keep as is) */}
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <h3 className="text-lg font-bold flex items-center gap-2 text-white">
-                                            <div className="p-1.5 bg-green-500/20 rounded-lg"><CheckCircle className="w-4 h-4 text-green-400" /></div>
-                                            Active Tasks
-                                        </h3>
-                                        <span className="text-xs font-mono text-white/40 bg-white/5 px-2 py-1 rounded-md">{activeTasks.length} Pending</span>
-                                    </div>
-                                    
-                                    {tasksLoading ? <div className="text-white/50 flex items-center gap-2 py-8"><Loader2 className="w-4 h-4 animate-spin" /> Loading tasks...</div> :
-                                        activeTasks.length === 0 ? (
-                                            <GlassCard className="p-12 text-center flex flex-col items-center justify-center gap-4 border-dashed border-white/20 min-h-[250px]">
-                                                <div className="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center"><Check className="w-8 h-8 text-green-500/40" /></div>
-                                                <p className="text-white/50">All caught up! No pending tasks.</p>
-                                            </GlassCard>
-                                        ) : (
-                                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                                                {activeTasks.map(task => (
-                                                    <GlassCard key={task.id} className="p-5 flex flex-col justify-between group h-full border-l-4 border-l-purple-500">
-                                                        <div className="mb-4">
-                                                            <div className="flex justify-between items-start mb-3">
-                                                                <Link href={`/teams/${task.project_id}`} className="text-[10px] bg-white/5 text-white/60 px-2 py-1 rounded border border-white/10 hover:bg-white/10 transition font-mono uppercase tracking-wide truncate max-w-[150px]">
-                                                                    {task.project_name}
-                                                                </Link>
-                                                                <span className={`text-[10px] uppercase tracking-widest font-bold px-2 py-1 rounded ${task.status === 'review' ? 'bg-yellow-500/10 text-yellow-400' : 'bg-blue-500/10 text-blue-400'}`}>
-                                                                    {task.status}
-                                                                </span>
-                                                            </div>
-                                                            <h4 className="font-bold text-white text-sm line-clamp-2 leading-relaxed group-hover:text-purple-300 transition-colors">{task.description}</h4>
-                                                        </div>
-                                                        <div className="flex items-center justify-between mt-auto pt-4 border-t border-white/5">
-                                                            <div className="flex items-center gap-1.5 text-xs text-white/40">
-                                                                <Calendar className="w-3.5 h-3.5" />
-                                                                {new Date(task.deadline).toLocaleDateString()}
-                                                            </div>
-                                                            {task.status !== 'review' && (
-                                                                <button onClick={() => handleTaskSubmit(task)} className="bg-green-600 hover:bg-green-500 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 shadow-lg shadow-green-900/20">
-                                                                    <Check className="w-3 h-3" /> Mark Done
-                                                                </button>
-                                                            )}
-                                                        </div>
-                                                    </GlassCard>
-                                                ))}
-                                            </div>
-                                        )}
-                                </div>
-
-                                {/* --- NEW SECTION: NEWS FROM COLLABQUEST --- */}
-                                <div>
-                                    <h3 className="text-lg font-bold flex items-center gap-2 text-white mb-4">
-                                        <div className="p-1.5 bg-blue-500/20 rounded-lg"><Sparkles className="w-4 h-4 text-blue-400" /></div>
-                                        News from CollabQuest
-                                    </h3>
-                                    <GlassCard className="divide-y divide-white/10">
-                                        {NEWS_ITEMS.map((news, i) => (
-                                            <div key={i} className="p-4 flex gap-4 hover:bg-white/5 transition group">
-                                                <div className="flex flex-col items-center min-w-[60px]">
-                                                    <span className="text-[10px] font-black text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">{news.version}</span>
-                                                    <span className="text-[10px] text-white/30 mt-1 font-mono">{news.date}</span>
-                                                </div>
-                                                <div>
-                                                    <h4 className="font-bold text-sm text-white group-hover:text-blue-400 transition">{news.title}</h4>
-                                                    <p className="text-xs text-white/50 mt-1 leading-relaxed">{news.desc}</p>
-                                                </div>
-                                            </div>
-                                        ))}
-                                        <div className="p-3 text-center">
-                                            <span className="text-[10px] text-white/20 uppercase tracking-widest font-bold">More updates coming soon</span>
+                    {/* Split Layout */}
+                    <div className="grid grid-cols-1 xl:grid-cols-5 gap-8">
+                        {/* Left Column */}
+                        <div className="xl:col-span-3 space-y-8">
+                            {/* Active Tasks */}
+                            <DashboardCard className="p-6">
+                                <div className="flex items-center justify-between mb-6">
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                                            <Layout className="w-5 h-5 text-purple-400" />
                                         </div>
-                                    </GlassCard>
+                                        <div>
+                                            <h3 className="font-bold text-lg">Active Tasks</h3>
+                                            <p className="text-xs text-gray-500">{activeTasks.length} pending</p>
+                                        </div>
+                                    </div>
                                 </div>
 
-                            </div>
-
-                            {/* --- RIGHT COLUMN: LEADERBOARDS (NEW) --- */}
-                            <div className="space-y-8">
-
-                                {/* TOP USERS */}
-                                <div>
-                                    <h3 className="text-sm font-bold uppercase tracking-widest text-white/50 mb-4 flex items-center gap-2">
-                                        <Award className="w-4 h-4 text-yellow-500" /> Top Users
-                                    </h3>
-                                    <GlassCard className="overflow-hidden">
-                                        <table className="w-full text-left border-collapse">
-                                            <thead>
-                                                <tr className="border-b border-white/10 bg-white/5 text-[10px] uppercase text-white/40">
-                                                    <th className="p-3 font-bold">#</th>
-                                                    <th className="p-3 font-bold">User</th>
-                                                    <th className="p-3 font-bold text-right">Trust</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-white/5">
-                                                {topUsers.map((u, i) => (
-                                                    <tr key={u.id} className="hover:bg-white/5 transition cursor-pointer" onClick={() => router.push(`/profile/${u.id}`)}>
-                                                        <td className="p-3 text-xs font-mono text-white/30 w-8">{i + 1}</td>
-                                                        <td className="p-3">
-                                                            <div className="flex items-center gap-2">
-                                                                <img src={u.avatar_url || "https://github.com/shadcn.png"} className="w-6 h-6 rounded-full border border-white/10" />
-                                                                <span className={`text-xs font-bold ${i < 3 ? 'text-yellow-400' : 'text-white'}`}>{u.username}</span>
-                                                            </div>
-                                                        </td>
-                                                        <td className="p-3 text-right">
-                                                            <span className="text-xs font-mono font-bold text-green-400">{u.trust_score.toFixed(1)}</span>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </GlassCard>
-                                </div>
-
-                                {/* TOP PROJECTS */}
-                                <div>
-                                    <h3 className="text-sm font-bold uppercase tracking-widest text-white/50 mb-4 flex items-center gap-2">
-                                        <Star className="w-4 h-4 text-purple-500" /> Top Projects
-                                    </h3>
-                                    <GlassCard className="overflow-hidden">
-                                        <table className="w-full text-left border-collapse">
-                                            <thead>
-                                                <tr className="border-b border-white/10 bg-white/5 text-[10px] uppercase text-white/40">
-                                                    <th className="p-3 font-bold">#</th>
-                                                    <th className="p-3 font-bold">Project</th>
-                                                    <th className="p-3 font-bold text-right">Likes</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-white/5">
-                                                {topProjects.map((p, i) => (
-                                                    <tr key={p.id} className="hover:bg-white/5 transition cursor-pointer" onClick={() => router.push(`/teams/${p.id}`)}>
-                                                        <td className="p-3 text-xs font-mono text-white/30 w-8">{i + 1}</td>
-                                                        <td className="p-3">
-                                                            <div className="font-bold text-xs text-white mb-0.5 truncate max-w-[120px]">{p.name}</div>
-                                                            <div className="flex gap-1">
-                                                                {p.needed_skills.slice(0, 2).map((s, idx) => (
-                                                                    <span key={idx} className="text-[8px] bg-white/10 px-1 rounded text-white/50">{s}</span>
-                                                                ))}
-                                                            </div>
-                                                        </td>
-                                                        <td className="p-3 text-right">
-                                                            <span className="text-xs font-mono font-bold text-purple-400">{p.favorite_count}</span>
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </GlassCard>
-                                </div>
-                            </div>
-                        </div>
-
-                        {/* Task History */}
-                        {historyTasks.length > 0 && (
-                            <div className="w-full">
-                                <h3 className="text-sm font-bold uppercase tracking-widest text-white/30 mb-4 pl-1">Recently Completed</h3>
-                                <div className="space-y-2">
-                                    {historyTasks.map((task, i) => (
-                                        <div key={i} className="flex items-center justify-between p-4 rounded-xl bg-white/5 border border-white/5 hover:bg-white/10 transition group">
-                                            <div className="flex items-center gap-4">
-                                                <div className="p-2 bg-green-500/10 rounded-full text-green-500 group-hover:scale-110 transition-transform"><Check className="w-3 h-3" /></div>
-                                                <div className="flex flex-col">
-                                                    <span className="text-sm font-medium text-white/50 line-through decoration-white/20">{task.description}</span>
-                                                    <span className="text-[10px] text-white/30">{task.project_name}</span>
+                                {tasksLoading ? (
+                                    <div className="flex items-center justify-center py-12">
+                                        <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+                                    </div>
+                                ) : activeTasks.length === 0 ? (
+                                    <div className="text-center py-12">
+                                        <CheckCircle className="w-12 h-12 text-green-500/50 mx-auto mb-3" />
+                                        <p className="text-gray-500">All caught up! No pending tasks.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {activeTasks.map(task => (
+                                            <motion.div
+                                                key={task.id}
+                                                initial={{ opacity: 0, x: -20 }}
+                                                animate={{ opacity: 1, x: 0 }}
+                                                className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-purple-500/30 transition-all"
+                                            >
+                                                <div className="flex items-start justify-between gap-4">
+                                                    <div className="flex-1">
+                                                        <div className="flex items-center gap-2 mb-2">
+                                                            <span className="text-xs font-medium text-purple-400">{task.project_name}</span>
+                                                            <span className={`text-[10px] px-2 py-0.5 rounded-full ${task.status === 'review' ? 'bg-yellow-500/10 text-yellow-400' : 'bg-blue-500/10 text-blue-400'}`}>
+                                                                {task.status}
+                                                            </span>
+                                                        </div>
+                                                        <p className="text-sm text-gray-300">{task.description}</p>
+                                                        <div className="flex items-center gap-1.5 mt-2 text-xs text-gray-500">
+                                                            <Calendar className="w-3 h-3" />
+                                                            {new Date(task.deadline).toLocaleDateString()}
+                                                        </div>
+                                                    </div>
+                                                    {task.status !== 'review' && (
+                                                        <button onClick={() => handleTaskSubmit(task)} className="px-4 py-2 bg-white/5 hover:bg-green-500/10 hover:text-green-400 border border-white/10 hover:border-green-500/30 text-gray-300 rounded-full text-xs font-bold transition-all flex items-center gap-1.5">
+                                                            <Check className="w-3 h-3" /> Done
+                                                        </button>
+                                                    )}
                                                 </div>
+                                            </motion.div>
+                                        ))}
+                                    </div>
+                                )}
+                            </DashboardCard>
+
+                            {/* Platform Updates */}
+                            <DashboardCard className="p-6">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center">
+                                        <Sparkles className="w-5 h-5 text-purple-400" />
+                                    </div>
+                                    <h3 className="font-bold text-lg">Platform Updates</h3>
+                                </div>
+                                <div className="space-y-4">
+                                    {NEWS_ITEMS.map((news, i) => (
+                                        <div key={i} className="flex gap-4 p-4 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+                                            <div className="w-10 h-10 rounded-xl bg-purple-500/10 flex items-center justify-center shrink-0">
+                                                <news.icon className="w-5 h-5 text-purple-400" />
                                             </div>
-                                            <span className="text-[10px] text-green-400/50 font-mono">COMPLETED</span>
+                                            <div>
+                                                <div className="flex items-center gap-2 mb-1">
+                                                    <span className="text-xs font-bold text-purple-400">{news.version}</span>
+                                                    <span className="text-xs text-gray-500">{news.date}</span>
+                                                </div>
+                                                <h4 className="font-semibold text-sm">{news.title}</h4>
+                                                <p className="text-xs text-gray-500 mt-0.5">{news.desc}</p>
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
-                            </div>
-                        )}
+                            </DashboardCard>
+                        </div>
 
+                        {/* Right Column - Leaderboards */}
+                        <div className="xl:col-span-2 space-y-8">
+                            {/* Top Contributors */}
+                            <DashboardCard className="p-6">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="w-10 h-10 rounded-xl bg-yellow-500/10 flex items-center justify-center">
+                                        <Award className="w-5 h-5 text-yellow-400" />
+                                    </div>
+                                    <h3 className="font-bold text-lg">Top Contributors</h3>
+                                </div>
+                                <div className="space-y-3">
+                                    {topUsers.map((u, i) => (
+                                        <motion.div
+                                            key={u.id}
+                                            initial={{ opacity: 0, x: 20 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            transition={{ delay: i * 0.1 }}
+                                            onClick={() => router.push(`/profile/${u.id}`)}
+                                            className="flex items-center gap-3 p-3 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-purple-500/30 cursor-pointer transition-all"
+                                        >
+                                            <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${i === 0 ? 'bg-yellow-500 text-black' : i === 1 ? 'bg-gray-400 text-black' : i === 2 ? 'bg-amber-700 text-white' : 'bg-white/10 text-gray-400'}`}>
+                                                {i + 1}
+                                            </span>
+                                            <img src={u.avatar_url || "/default-avatar.png"} alt={u.username} className="w-9 h-9 rounded-full object-cover border border-white/10" />
+                                            <span className="flex-1 font-medium text-sm truncate">{u.username}</span>
+                                            <span className="text-xs font-bold text-purple-400">{u.trust_score.toFixed(1)}</span>
+                                        </motion.div>
+                                    ))}
+                                </div>
+                            </DashboardCard>
+
+                            {/* Trending Projects */}
+                            <DashboardCard className="p-6">
+                                <div className="flex items-center gap-3 mb-6">
+                                    <div className="w-10 h-10 rounded-xl bg-green-500/10 flex items-center justify-center">
+                                        <TrendingUp className="w-5 h-5 text-green-400" />
+                                    </div>
+                                    <h3 className="font-bold text-lg">Trending Projects</h3>
+                                </div>
+                                <div className="space-y-3">
+                                    {topProjects.map((p, i) => (
+                                        <motion.div
+                                            key={p.id}
+                                            initial={{ opacity: 0, x: 20 }}
+                                            animate={{ opacity: 1, x: 0 }}
+                                            transition={{ delay: i * 0.1 }}
+                                            onClick={() => router.push(`/teams/${p.id}`)}
+                                            className="p-4 rounded-xl bg-white/[0.02] border border-white/[0.06] hover:border-purple-500/30 cursor-pointer transition-all"
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="flex-1 min-w-0">
+                                                    <h4 className="font-semibold text-sm truncate">{p.name}</h4>
+                                                    <div className="flex gap-1.5 mt-2 flex-wrap">
+                                                        {p.needed_skills.slice(0, 2).map((s, idx) => (
+                                                            <span key={idx} className="text-[10px] px-2 py-0.5 bg-purple-500/10 text-purple-400 rounded-full">{s}</span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-1 text-yellow-400">
+                                                    <Star className="w-4 h-4 fill-current" />
+                                                    <span className="text-xs font-bold">{p.favorite_count}</span>
+                                                </div>
+                                            </div>
+                                        </motion.div>
+                                    ))}
+                                </div>
+                            </DashboardCard>
+                        </div>
                     </div>
-                </main>
-            </div>
+                </div>
+            </main>
 
             {/* Email Modal */}
             <AnimatePresence>
                 {showEmailModal && emailRecipient && (
-                    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                         <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            className="bg-[#121212] border border-white/10 p-8 rounded-2xl w-full max-w-md relative shadow-2xl"
+                            initial={{ opacity: 0, scale: 0.95 }}
+                            animate={{ opacity: 1, scale: 1 }}
+                            exit={{ opacity: 0, scale: 0.95 }}
+                            className="w-full max-w-lg bg-[#0D0D12] border border-white/[0.08] rounded-2xl overflow-hidden shadow-[0_0_60px_-15px_rgba(168,85,247,0.3)]"
                         >
-                            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-purple-500 to-blue-500" />
-                            <div className="flex justify-between items-center mb-6">
-                                <h2 className="text-xl font-bold flex items-center gap-2 text-white"><Mail className="w-5 h-5 text-purple-400" /> Secure Message</h2>
-                                <button onClick={() => setShowEmailModal(false)} className="p-2 hover:bg-white/10 rounded-full transition"><X className="w-5 h-5 text-white/50" /></button>
+                            <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+                                <h3 className="font-bold text-lg flex items-center gap-2"><Mail className="w-5 h-5 text-purple-400" /> New Message</h3>
+                                <button onClick={() => setShowEmailModal(false)} className="p-2 hover:bg-white/10 rounded-full transition"><X className="w-5 h-5" /></button>
                             </div>
-                            <div className="space-y-4 mt-4">
-                                <div className="bg-white/5 p-3 rounded-xl text-sm text-white/60 border border-white/5">To: <span className="text-white font-bold">{emailRecipient.name}</span></div>
-                                <input className="w-full bg-black/40 border border-white/10 rounded-xl p-3 outline-none focus:border-purple-500 text-white transition-colors" placeholder="Subject" value={emailSubject} onChange={e => setEmailSubject(e.target.value)} />
-                                <textarea className="w-full bg-black/40 border border-white/10 rounded-xl p-3 h-32 outline-none focus:border-purple-500 resize-none text-white transition-colors" placeholder="Message" value={emailBody} onChange={e => setEmailBody(e.target.value)} />
-                                <button onClick={handleSendEmail} className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold py-3 rounded-xl flex items-center justify-center gap-2 shadow-lg shadow-purple-900/30 transition-all hover:scale-[1.01]">
+                            <div className="p-6 space-y-4">
+                                <p className="text-sm text-gray-400">To: <span className="text-white font-medium">{emailRecipient.name}</span></p>
+                                <input
+                                    placeholder="Subject"
+                                    value={emailSubject}
+                                    onChange={e => setEmailSubject(e.target.value)}
+                                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition"
+                                />
+                                <textarea
+                                    placeholder="Write your message..."
+                                    rows={5}
+                                    value={emailBody}
+                                    onChange={e => setEmailBody(e.target.value)}
+                                    className="w-full px-4 py-3 bg-white/5 border border-white/10 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500/50 transition resize-none"
+                                />
+                                <button onClick={handleSendEmail} className="w-full bg-gradient-to-r from-purple-600 to-purple-500 hover:from-purple-500 hover:to-purple-400 text-white font-bold py-3.5 rounded-full flex items-center justify-center gap-2 shadow-[0_0_30px_-5px_rgba(168,85,247,0.5)] transition-all">
                                     <Send className="w-4 h-4" /> Send Message
                                 </button>
                             </div>
