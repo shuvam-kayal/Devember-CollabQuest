@@ -55,6 +55,20 @@ export default function NetworkClient() {
     const [emailBody, setEmailBody] = useState("");
     const [sendingEmail, setSendingEmail] = useState(false);
 
+    // --- 1. MOUSE STATE FOR GLOW ---
+    const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+
+    // --- 2. MOUSE EFFECT HOOK ---
+    useEffect(() => {
+        const updateMousePosition = (ev: MouseEvent) => {
+        setMousePosition({ x: ev.clientX, y: ev.clientY });
+        };
+        window.addEventListener("mousemove", updateMousePosition);
+        return () => {
+        window.removeEventListener("mousemove", updateMousePosition);
+        };
+    }, []);
+
     // --- INITIAL FETCH ---
     useEffect(() => {
         const token = Cookies.get("token");
@@ -170,6 +184,12 @@ export default function NetworkClient() {
 
     return (
        <div className="min-h-screen w-full bg-transparent text-zinc-100 font-sans selection:bg-purple-500/30 relative overflow-hidden">
+            <div 
+                className="pointer-events-none fixed inset-0 z-30 transition-opacity duration-300"
+                style={{
+                background: `radial-gradient(800px at ${mousePosition.x}px ${mousePosition.y}px, rgba(168, 85, 247, 0.1), transparent 80%)`,
+                }}
+            />
             <div className="max-w-6xl mx-auto p-8 pt-12">
                 
                 {/* PAGE TITLE */}
