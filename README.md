@@ -1,26 +1,103 @@
 # 🚀 CollabQuest - The Smart Team Finder
 
-**CollabQuest** is a platform designed to solve the "Free-Rider Problem" in student hackathons. By leveraging GitHub API data, it calculates a **Trust Score** for every user, ensuring teams are matched based on verified skills and reliability.
+> **QuadCore Clowns**
+
+**CollabQuest** is a full-stack collaborative platform designed to solve the "Free-Rider Problem" in student hackathons and academic projects. Unlike traditional listing platforms, it utilizes a **Smart Match** system backed by vector embeddings and a comprehensive **Trust Score** to ensure teams are formed based on verified skills, compatibility, and reliability.
+
+---
+
+## 🌐 Live Deployment
+
+* **Frontend (Vercel):** [https://devember-collab-quest.vercel.app/](https://devember-collab-quest.vercel.app/)
+* **Backend (Hugging Face):** [https://rautrao-myspace.hf.space/](https://rautrao-myspace.hf.space/)
+
+---
 
 ## 🛠️ Tech Stack
 
-* **Frontend:** Next.js, Tailwind CSS, Framer Motion
-* **Backend:** Python FastAPI, Uvicorn
-* **Database:** MongoDB (Beanie ODM)
-* **Auth:** GitHub OAuth + JWT
+### Frontend (Client-Side)
+* **Framework:** Next.js 16.0.7 (App Router) & React 19.2.0
+* **Styling:** Tailwind CSS v4, clsx, tailwind-merge
+* **Animation:** Framer Motion v12 (Physics-based transitions)
+* **State & Validation:** React Hook Form, Zod, Sonner (Toast notifications)
+* **Real-Time:** WebRTC (Video/Audio) & Socket.io (Signaling)
+
+### Backend (Server-Side)
+* **Framework:** Python FastAPI, Uvicorn
+* **Database:** MongoDB (via Beanie ODM) & ChromaDB (Vector Database)
+* **AI & Logic:** LangChain, LangGraph, Sentence-Transformers (all-MiniLM-L6-v2)
+* **Auth:** GitHub/Google OAuth + JWT (Python-JOSE), Passlib (Bcrypt)
 
 ---
 
-## ✅ Prerequisites
+## ✨ Key Features
 
-Before running this project, ensure you have the following installed on your machine:
+### 1. Smart Match System ("Tinder for Devs")
+Uses vector embeddings to replace keyword searching with semantic understanding.
+* **Vector Embeddings:** Generates 384-dimensional vectors for user bio/skills and project descriptions.
+* **Scoring Algorithm:**
+    * *70% Semantic Compatibility:* Skill matches and context alignment.
+    * *30% Availability Overlap:* Logistical schedule matching.
+* **Interaction:** Physics-based swipe interface (Left/Right) with keyboard accessibility.
 
-* **Node.js** (v18+)
-* **Python** (v3.12.0)
-* **Git**
-* **MongoDB Cluster** (Get a free cluster at [MongoDB Atlas](https://www.mongodb.com/atlas/database))
+### 2. Trust & Verification Engine
+* **Trust Score (0-7.0):** A calculated metric derived from verified external data (GitHub commits, LeetCode solutions) and internal peer ratings.
+* **Skill Verification:** Users can take timed quizzes to earn "Expert" or "Advanced" badges on their profile.
+
+### 3. Integrated Collaboration Suite
+* **Real-Time Chat:** Persistent chat history with file sharing support.
+* **Video Conferencing:** Built-in WebRTC suite supporting screen sharing and toggleable video/audio—no external tools required.
+* **Team Dashboard:** Features a democratic "Notice Board" where critical actions (like removing a member) require a voting supermajority.
+
+### 4. AI Project Manager (CollabBot)
+A multi-agent system powered by LangGraph with three specialized nodes:
+* **Router:** Classifies intent (`nvidia/nemotron-3-nano`).
+* **Mentor:** Generates roadmaps and advice (`llama-3.3-70b`).
+* **Coder:** Assists with snippets and debugging (`xiaomi/mimo-v2`).
+
+### 5. Accessibility First
+* **Global TTS:** A Text-to-Speech engine runs across the entire application. Users can highlight any text (chat, docs, code) to hear it read aloud immediately.
 
 ---
+
+## 📂 Project Structure
+
+This project follows a monorepo structure containing both the Next.js frontend and FastAPI backend.
+
+```text
+DEVEMBER-CQ/
+├── .github/
+├── .vercel/
+├── collabquest-backend/                 # FastAPI Server
+│   ├── app/
+│   │   ├── auth/                        # OAuth & JWT handling
+│   │   ├── routes/                      # API Endpoints (matches, users, teams)
+│   │   ├── services/                    # Business logic layers
+│   │   ├── database.py                  # MongoDB (Beanie) connection
+│   │   └── models.py                    # Pydantic/Beanie models
+│   ├── chroma_db_matching/              # Vector Search & Semantic Matching
+│   ├── uploads/                         # Static file storage
+│   ├── clean_db.py
+│   ├── main.py                          # App Entry Point
+│   ├── requirements.txt
+│   └── seeding_data.py
+│
+└── collabquest-frontend/                # Next.js 16 Application
+    ├── ai_services/                     # LangGraph/AI integration
+    ├── app/
+    │   ├── (authgp)/                    # Login/Signup Groups
+    │   ├── (working)/                   # Protected Routes (Chat, Find Team, Profile)
+    │   └── dashboard/                   # Main User Dashboard
+    ├── components/
+    │   ├── Chatbot.tsx                  # AI Project Manager UI
+    │   ├── SelectionTTS.tsx             # Global Accessibility Engine
+    │   ├── Sidebar.tsx                  # Smart Sidebar
+    │   └── ...
+    ├── lib/
+    ├── middleware.ts                    # Edge Security
+    └── package.json
+
+```
 
 ## 🚀 Getting Started
 
@@ -175,3 +252,11 @@ python clean_db.py
 # Create fresh dummy users/projects
 python seed_data.py
 ```
+
+---
+
+## 🔮 Future Enhancements
+
+1. AI-based resume analysis.
+2. Direct GitHub Issue integration in the dashboard.
+3. Dedicated mobile application.
