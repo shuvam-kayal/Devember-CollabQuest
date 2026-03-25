@@ -9,7 +9,7 @@
 ## 🌐 Live Deployment
 
 * **Frontend (Vercel):** [https://devember-collab-quest.vercel.app/](https://devember-collab-quest.vercel.app/)
-* **Backend (Hugging Face):** [https://rautrao-myspace.hf.space/](https://rautrao-myspace.hf.space/)
+* **Backend (Hugging Face):** [https://shuvam-kayal-collabquest-backend.hf.space/](https://shuvam-kayal-collabquest-backend.hf.space/)
 
 ---
 
